@@ -1,0 +1,22 @@
+<!doctype html><html lang="es"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#17202a"><link rel="manifest" href="manifest.webmanifest">
+<title>Radar Docente</title>
+<style>
+body{margin:0;background:#f4f6f8;color:#17202a;font-family:system-ui}header{background:#17202a;color:#fff;padding:22px 16px}main{max-width:760px;margin:auto;padding:14px}h1{margin:0}.toolbar{display:flex;gap:8px;margin:12px 0}.toolbar button{flex:1;padding:12px;border:0;border-radius:10px;font-weight:700}.primary{background:#17202a;color:#fff}.status,.card{background:#fff;border:1px solid #dde2e7;border-radius:14px;padding:14px;margin:10px 0}.filters{display:grid;grid-template-columns:1fr 1fr;gap:8px}.filters input{grid-column:1/-1}.filters>*{padding:10px;border:1px solid #d9dee5;border-radius:10px}.tag{font-size:11px;padding:4px 8px;background:#edf1f5;border-radius:99px;margin-right:4px}.new{background:#dcf7e7;color:#126b39}.title{font-weight:750;font-size:17px;margin:7px 0}.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:13px;margin-top:12px}a{display:block;background:#17202a;color:#fff;text-align:center;padding:10px;border-radius:9px;text-decoration:none;margin-top:10px}
+</style></head><body><header><main><h1>🔔 Radar Docente</h1><small>CABA + Avellaneda · Danza · Educación Artística · Preceptoría</small></main></header>
+<main><div class="toolbar"><button class="primary" onclick="actualizar()">↻ Actualizar ahora</button></div>
+<div class="status">Última revisión: <b id="last">—</b><br><span id="msg">Conectando…</span></div>
+<div class="filters"><select id="zona"><option value="">CABA + Avellaneda</option><option>CABA</option><option>Avellaneda</option></select><select id="area"><option value="">Todas</option><option>Danza</option><option>Educación Artística</option><option>Preceptoría</option></select><input id="q" placeholder="Buscar…"></div>
+<section id="list"></section></main>
+<script>
+const API=(localStorage.getItem("radar_api")||"http://localhost:8000/api");
+async function cargar(){
+ try{let r=await fetch(API+"/oportunidades",{cache:"no-store"});let d=await r.json();window.db=d;render();$("msg").textContent="Monitor conectado.";}
+ catch(e){$("msg").textContent="No se pudo conectar al monitor. Configurá la URL del servidor en radar_api."}
+}
+async function actualizar(){ $("msg").textContent="Consultando fuentes…";try{let r=await fetch(API+"/actualizar",{method:"POST"});window.db=await r.json();render();$("msg").textContent="Actualización terminada."}catch(e){$("msg").textContent="El servidor no responde."}}
+function $(x){return document.getElementById(x)}
+function render(){let d=window.db||{items:[]},z=$("zona").value,a=$("area").value,q=$("q").value.toLowerCase();let rows=(d.items||[]).filter(x=>(!z||x.zona===z)&&(!a||x.area===a)&&(!q||(x.titulo+" "+x.institucion+" "+x.cargo).toLowerCase().includes(q)));$("last").textContent=d.checked_at?new Date(d.checked_at).toLocaleString("es-AR"):"—";$("list").innerHTML=rows.length?rows.map(x=>`<article class="card"><span class="tag">${x.zona}</span><span class="tag">${x.area}</span>${x.nueva?'<span class="tag new">NUEVA</span>':''}<div class="title">${x.titulo}</div><div>${x.institucion||""}</div><div class="grid"><div><b>Cargo</b><br>${x.cargo||"—"}</div><div><b>Nivel</b><br>${x.nivel||"—"}</div><div><b>Carácter</b><br>${x.caracter||"—"}</div><div><b>Horas</b><br>${x.horas||"—"}</div></div><a href="${x.url}" target="_blank">Ver convocatoria oficial →</a></article>`).join(""):"<p>No hay novedades con estos filtros.</p>"}
+document.querySelectorAll("select,input").forEach(e=>e.oninput=render);cargar();
+</script></body></html>
