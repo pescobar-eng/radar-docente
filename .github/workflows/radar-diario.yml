@@ -24,7 +24,7 @@ jobs:
             --write-out "HTTP_STATUS=%{http_code}\n" \
             --request POST \
             --max-time 300 \
-            https://radar-docente-production.up.railway.app/api/actualizar \
+            https://radar-docente-production.up.railway.app/api/actualizar-diario \
             > /tmp/radar_status.txt
 
           CURL_CODE=$?
