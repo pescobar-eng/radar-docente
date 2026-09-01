@@ -1,8 +1,10 @@
 import os
 import json
 import hashlib
+import re
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urljoin
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,26 +12,48 @@ from fastapi.responses import FileResponse
 from playwright.async_api import async_playwright
 
 
+# ============================================================
+# CONFIGURACIÓN
+# ============================================================
+
 DATA = Path(os.getenv("DATA_FILE", "/data/data.json"))
-PROFILE = Path(os.getenv("BROWSER_PROFILE", "/data/browser-profile"))
 FRONTEND = Path("/app/frontend")
 
-CABA_URL = "https://actopublico.bue.edu.ar/"
-ABC_URL = "https://misservicios.abc.gob.ar/actos.publicos.digitales/"
+CABA_BASE = "https://actopublico.bue.edu.ar/"
+CABA_LIST = "https://actopublico.bue.edu.ar/?todas=true"
 
-KEYWORDS = [
+SAD_AVELLANEDA = "https://www.sadavellaneda.com.ar/"
+
+
+# ============================================================
+# PALABRAS QUE SÍ NOS INTERESAN
+# ============================================================
+
+DANZA_WORDS = [
     "danza",
+    "danzas",
     "danza clásica",
     "danza contemporánea",
     "danzas folklóricas",
     "danzas folclóricas",
     "tango",
-    "educación artística",
-    "artística",
+    "expresión corporal",
+    "expresion corporal",
+]
+
+PRECEPTORIA_WORDS = [
     "preceptor",
     "preceptora",
     "preceptoría",
+    "preceptoria",
+    "jefe de preceptores",
+    "jefa de preceptores",
 ]
+
+
+# ============================================================
+# APP
+# ============================================================
 
 app = FastAPI(title="Radar Docente API")
 
@@ -41,65 +65,154 @@ app.add_middleware(
 )
 
 
-def load():
+# ============================================================
+# UTILIDADES
+# ============================================================
+
+def normalize(text):
+    return " ".join((text or "").lower().split())
+
+
+def clean(text):
+    return re.sub(r"\s+", " ", text or "").strip()
+
+
+def load_data():
     if DATA.exists():
         try:
-            return json.loads(DATA.read_text(encoding="utf-8"))
+            return json.loads(
+                DATA.read_text(encoding="utf-8")
+            )
         except Exception:
             pass
 
     return {
         "checked_at": None,
-        "items": []
+        "items": [],
+        "source_status": {},
     }
 
 
-def save(data):
-    DATA.parent.mkdir(parents=True, exist_ok=True)
+def save_data(data):
+    DATA.parent.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
     DATA.write_text(
-        json.dumps(data, ensure_ascii=False, indent=2),
+        json.dumps(
+            data,
+            ensure_ascii=False,
+            indent=2
+        ),
         encoding="utf-8"
     )
 
 
-def norm(value):
-    return " ".join((value or "").lower().split())
+def make_id(source, url, title, raw):
+    value = (
+        f"{source}|"
+        f"{url}|"
+        f"{title}|"
+        f"{raw}"
+    )
 
-
-def make_id(source, url, title, raw=""):
-    text = f"{source}|{url}|{title}|{raw}"
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:20]
+    return hashlib.sha256(
+        value.encode("utf-8")
+    ).hexdigest()[:24]
 
 
 def classify(text):
-    text = norm(text)
+    """
+    Devuelve únicamente:
 
-    if "preceptor" in text:
-        return "Preceptoría"
+    - Danza
+    - Preceptoría
+    - None
 
-    if any(word in text for word in [
-        "danza",
-        "danzas",
-        "tango",
-        "expresión corporal",
-        "expresion corporal"
-    ]):
-        return "Danza"
+    IMPORTANTE:
+    No usamos "Educación Artística" como criterio,
+    porque eso incluiría Biología, Educación Física,
+    Música, Artes Visuales, etc.
+    """
+
+    text = normalize(text)
+
+    for word in PRECEPTORIA_WORDS:
+        if word in text:
+            return "Preceptoría"
+
+    for word in DANZA_WORDS:
+        if word in text:
+            return "Danza"
 
     return None
 
 
-async def scrape_caba():
-    results = []
+def get_value(lines, labels):
+    """
+    Intenta obtener el valor de una etiqueta.
 
-    # Consultamos directamente el listado público de ARTÍSTICA.
-    # También recorremos algunas páginas para no quedarnos solo con la primera.
-    urls = [
-        "https://actopublico.bue.edu.ar/?areas%5B0%5D=8&asignaturas%5B0%5D=0&cargos%5B0%5D=0&escuelas%5B0%5D=0&especialidades%5B0%5D=0&page=1&status_carousel=1&status_map=1",
+    Soporta formatos como:
+
+    Asignatura
+    DANZA CLÁSICA
+
+    o:
+
+    Asignatura: DANZA CLÁSICA
+    """
+
+    normalized_labels = [
+        normalize(label)
+        for label in labels
     ]
 
+    for i, line in enumerate(lines):
+
+        current = normalize(line)
+
+        # Formato:
+        # Asignatura: DANZA CLÁSICA
+        for label in normalized_labels:
+
+            if current.startswith(label + ":"):
+
+                value = line.split(":", 1)[1].strip()
+
+                if value:
+                    return value
+
+        # Formato:
+        # Asignatura
+        # DANZA CLÁSICA
+        if current in normalized_labels:
+
+            if i + 1 < len(lines):
+                return lines[i + 1].strip()
+
+    return ""
+
+
+# ============================================================
+# SCRAPER CABA
+# ============================================================
+
+async def scrape_caba():
+
+    results = []
+
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
+
+        browser = await p.chromium.launch(
+            headless=True
+        )
+
+        # ----------------------------------------------------
+        # Recorremos páginas del listado público
+        # ----------------------------------------------------
+
+        seen_urls = set()
 
         for page_number in range(1, 11):
 
@@ -118,292 +231,493 @@ async def scrape_caba():
             page = await browser.new_page()
 
             try:
+
                 await page.goto(
                     url,
                     wait_until="domcontentloaded",
                     timeout=60000
                 )
 
-                await page.wait_for_timeout(2500)
+                # El listado se completa con JavaScript.
+                await page.wait_for_timeout(5000)
 
-                body = await page.locator("body").inner_text()
+                # Scroll para activar posibles contenidos lazy.
+                for _ in range(8):
 
-                # Los cargos aparecen en bloques con "Actos Públicos de la Ciudad".
-                # Tomamos los enlaces reales hacia las solicitudes.
+                    await page.mouse.wheel(
+                        0,
+                        1600
+                    )
+
+                    await page.wait_for_timeout(400)
+
                 anchors = await page.locator(
                     'a[href*="/solicitud/"]'
-                ).all()
-
-                if not anchors:
-                    await page.close()
-                    break
-
-                seen = set()
-
-                for link in anchors:
-
-                    try:
-                        href = await link.get_attribute("href")
-                        label = (await link.inner_text()).strip()
-                    except Exception:
-                        continue
-
-                    if not href:
-                        continue
-
-                    if href.startswith("/"):
-                        href = (
-                            "https://actopublico.bue.edu.ar"
-                            + href
-                        )
-
-                    if href in seen:
-                        continue
-
-                    seen.add(href)
-
-                    # Abrimos el detalle de la solicitud.
-                    detail = await browser.new_page()
-
-                    try:
-                        await detail.goto(
-                            href,
-                            wait_until="domcontentloaded",
-                            timeout=30000
-                        )
-
-                        await detail.wait_for_timeout(700)
-
-                        detail_text = await detail.locator(
-                            "body"
-                        ).inner_text()
-
-                    except Exception:
-                        await detail.close()
-                        continue
-
-                    await detail.close()
-
-                    # Extraemos primero los campos concretos de la ficha.
-                    lines = [
-                        line.strip()
-                        for line in detail_text.splitlines()
-                        if line.strip()
-                    ]
-
-                    def buscar_exacto(etiqueta):
-                        etiqueta = etiqueta.lower()
-
-                        for i, line in enumerate(lines):
-                            if line.lower().strip() == etiqueta:
-                                if i + 1 < len(lines):
-                                    return lines[i + 1].strip()
-
-                        return ""
-
-                    nombre_cargo = buscar_exacto("nombre del cargo")
-                    asignatura = buscar_exacto("asignatura")
-                    area_oficial = buscar_exacto("área")
-                    institucion = buscar_exacto(
-                        "establecimiento del cargo"
+                ).evaluate_all(
+                    """
+                    elements => elements.map(
+                        element => ({
+                            href: element.href,
+                            text: (
+                                element.innerText || ""
+                            ).trim()
+                        })
                     )
-                    caracter = buscar_exacto("caracter")
-                    if not caracter:
-                        caracter = buscar_exacto("carácter")
-
-                    horas = buscar_exacto("horas cátedra")
-
-                    fecha = buscar_exacto(
-                        "fecha de acto público"
-                    )
-
-                    # Para decidir si nos interesa la oferta,
-                    # usamos CARGO + ASIGNATURA, no toda la página.
-                    datos_cargo = (
-                        f"{nombre_cargo} "
-                        f"{asignatura}"
-                    ).lower()
-
-                    es_preceptor = any(
-                        palabra in datos_cargo
-                        for palabra in [
-                            "preceptor",
-                            "preceptora",
-                            "jefe de preceptores",
-                            "jefa de preceptores",
-                        ]
-                    )
-
-                    es_danza = any(
-                        palabra in datos_cargo
-                        for palabra in [
-                            "danza",
-                            "danzas",
-                            "tango",
-                            "expresión corporal",
-                            "expresion corporal",
-                        ]
-                    )
-
-                    # Si no es Danza ni Preceptoría, descartamos.
-                    if not es_preceptor and not es_danza:
-                        continue
-
-                    if es_preceptor:
-                        area = "Preceptoría"
-                    else:
-                        area = "Danza"
-
-                    text = detail_text.lower()
-
-                    # No mostrar cargos ya asignados.
-                    if "estado:" in text and "asignada" in text:
-                        continue
-
-                    # No mostrar cargos cerrados.
-                    if "estado:" in text and "cerrada" in text:
-                        continue
-
-                    results.append({
-                        "source": "CABA",
-                        "zona": "CABA",
-                        "area": area,
-
-                        "nivel": (
-                            "Todos"
-                            if not buscar_exacto("nivel")
-                            else buscar_exacto("nivel")
-                        ),
-
-                        "titulo": (
-                            label
-                            or nombre_cargo
-                            or "Oportunidad docente CABA"
-                        ),
-
-                        "institucion": institucion,
-
-                        "cargo": (
-                            asignatura
-                            if asignatura
-                            else nombre_cargo
-                        ),
-
-                        "caracter": caracter,
-
-                        "horas": horas,
-
-                        "fecha": fecha,
-
-                        "estado": (
-                            "Publicada"
-                            if "publicada" in text
-                            else ""
-                        ),
-
-                        "url": href,
-
-                        "raw": detail_text[:7000]
-                    })
-                        
-                    
-
-                await page.close()
+                    """
+                )
 
             except Exception:
+
                 await page.close()
                 continue
 
+            await page.close()
+
+            # Si la página no tiene solicitudes,
+            # no seguimos avanzando.
+            if not anchors:
+                break
+
+            # ------------------------------------------------
+            # Abrimos cada solicitud
+            # ------------------------------------------------
+
+            for anchor in anchors:
+
+                href = anchor.get(
+                    "href",
+                    ""
+                )
+
+                label = clean(
+                    anchor.get(
+                        "text",
+                        ""
+                    )
+                )
+
+                if not href:
+                    continue
+
+                if href in seen_urls:
+                    continue
+
+                seen_urls.add(href)
+
+                detail = await browser.new_page()
+
+                try:
+
+                    await detail.goto(
+                        href,
+                        wait_until="domcontentloaded",
+                        timeout=30000
+                    )
+
+                    await detail.wait_for_timeout(
+                        1000
+                    )
+
+                    detail_text = await detail.locator(
+                        "body"
+                    ).inner_text()
+
+                except Exception:
+
+                    await detail.close()
+                    continue
+
+                await detail.close()
+
+                # ------------------------------------------------
+                # Convertimos la ficha en líneas
+                # ------------------------------------------------
+
+                lines = [
+                    clean(line)
+                    for line in detail_text.splitlines()
+                    if clean(line)
+                ]
+
+                # ------------------------------------------------
+                # Extraemos campos
+                # ------------------------------------------------
+
+                nombre_cargo = get_value(
+                    lines,
+                    [
+                        "nombre del cargo",
+                    ]
+                )
+
+                asignatura = get_value(
+                    lines,
+                    [
+                        "asignatura",
+                    ]
+                )
+
+                establecimiento = get_value(
+                    lines,
+                    [
+                        "establecimiento del cargo",
+                        "establecimiento",
+                    ]
+                )
+
+                caracter = get_value(
+                    lines,
+                    [
+                        "carácter",
+                        "caracter",
+                    ]
+                )
+
+                horas = get_value(
+                    lines,
+                    [
+                        "horas cátedra",
+                        "horas",
+                        "módulos",
+                    ]
+                )
+
+                nivel = get_value(
+                    lines,
+                    [
+                        "nivel",
+                    ]
+                )
+
+                fecha = get_value(
+                    lines,
+                    [
+                        "fecha de acto público",
+                        "fecha de acto",
+                        "acto público",
+                    ]
+                )
+
+                # ------------------------------------------------
+                # FILTRO PRINCIPAL
+                #
+                # SOLO usamos:
+                # nombre del cargo + asignatura
+                #
+                # No usamos toda la ficha.
+                # ------------------------------------------------
+
+                datos_relevantes = (
+                    f"{nombre_cargo} "
+                    f"{asignatura}"
+                )
+
+                area = classify(
+                    datos_relevantes
+                )
+
+                # No es Danza ni Preceptoría.
+                if area is None:
+                    continue
+
+                # ------------------------------------------------
+                # Estado
+                # ------------------------------------------------
+
+                estado_texto = normalize(
+                    detail_text
+                )
+
+                # Fuera de circulación.
+                if "asignada" in estado_texto:
+                    continue
+
+                if "cerrada" in estado_texto:
+                    continue
+
+                # ------------------------------------------------
+                # Resultado
+                # ------------------------------------------------
+
+                results.append({
+
+                    "source": "CABA",
+
+                    "zona": "CABA",
+
+                    "area": area,
+
+                    "nivel": nivel,
+
+                    "titulo": (
+                        nombre_cargo
+                        or label
+                        or "Oportunidad docente"
+                    ),
+
+                    "institucion": establecimiento,
+
+                    "cargo": (
+                        asignatura
+                        or nombre_cargo
+                    ),
+
+                    "caracter": caracter,
+
+                    "horas": horas,
+
+                    "fecha": fecha,
+
+                    "estado": (
+                        "Publicada"
+                        if "publicada" in estado_texto
+                        else ""
+                    ),
+
+                    "url": href,
+
+                    "raw": detail_text[:7000],
+                })
+
         await browser.close()
 
-    # Eliminar duplicados.
+    # --------------------------------------------------------
+    # Eliminar duplicados
+    # --------------------------------------------------------
+
     unique = {}
 
     for item in results:
-        key = (
-            item.get("url")
-            or item.get("titulo")
-        )
 
-        unique[key] = item
+        unique[
+            item["url"]
+        ] = item
 
-    return list(unique.values())
+    return list(
+        unique.values()
+    )
 
-async def scrape_abc():
+
+# ============================================================
+# AVELLANEDA
+# ============================================================
+
+async def scrape_avellaneda_public():
+
     results = []
 
     async with async_playwright() as p:
 
-        context = await p.chromium.launch_persistent_context(
-            str(PROFILE),
+        browser = await p.chromium.launch(
             headless=True
         )
 
-        page = (
-            context.pages[0]
-            if context.pages
-            else await context.new_page()
-        )
+        page = await browser.new_page()
 
-        await page.goto(
-            ABC_URL,
-            wait_until="domcontentloaded",
-            timeout=60000
-        )
+        try:
 
-        await page.wait_for_timeout(3000)
+            await page.goto(
+                SAD_AVELLANEDA,
+                wait_until="domcontentloaded",
+                timeout=60000
+            )
 
-        body = norm(await page.locator("body").inner_text())
+            await page.wait_for_timeout(
+                3000
+            )
 
-        # Nunca se almacenan contraseñas.
-        # La consulta utiliza solamente la sesión persistente del navegador.
+            links = await page.locator(
+                "a"
+            ).all()
 
-        if "avellaneda" in body:
+            for link in links:
 
-            for keyword in KEYWORDS:
+                try:
 
-                if keyword in body:
+                    label = clean(
+                        await link.inner_text()
+                    )
 
-                    results.append({
-                        "source": "ABC",
-                        "zona": "Avellaneda",
-                        "area": classify(keyword),
-                        "nivel": "Todos",
-                        "titulo": (
-                            f"Coincidencia APD Avellaneda: "
-                            f"{keyword.title()}"
-                        ),
-                        "institucion": "",
-                        "cargo": "",
-                        "caracter": "",
-                        "horas": "",
-                        "fecha": datetime.now().date().isoformat(),
-                        "estado": "Revisar publicación en APD",
-                        "url": ABC_URL,
-                        "raw": keyword,
-                    })
+                    href = await link.get_attribute(
+                        "href"
+                    )
 
-        await context.close()
+                except Exception:
 
-    return results
+                    continue
 
+                if not label or not href:
+                    continue
+
+                # ------------------------------------------------
+                # Solamente publicaciones vinculadas con
+                # Danza o Preceptoría.
+                # ------------------------------------------------
+
+                area = classify(label)
+
+                if area is None:
+                    continue
+
+                text = normalize(label)
+
+                if not any(
+                    term in text
+                    for term in [
+                        "acto público",
+                        "apd",
+                        "cobertura",
+                        "convocatoria",
+                        "danza",
+                        "preceptor",
+                    ]
+                ):
+                    continue
+
+                results.append({
+
+                    "source": "SAD Avellaneda",
+
+                    "zona": "Avellaneda",
+
+                    "area": area,
+
+                    "nivel": "",
+
+                    "titulo": label,
+
+                    "institucion": "",
+
+                    "cargo": "",
+
+                    "caracter": (
+                        "Convocatoria / cobertura"
+                    ),
+
+                    "horas": "",
+
+                    "fecha": "",
+
+                    "estado": "Publicada",
+
+                    "url": urljoin(
+                        SAD_AVELLANEDA,
+                        href
+                    ),
+
+                    "raw": label,
+                })
+
+        finally:
+
+            await browser.close()
+
+    unique = {}
+
+    for item in results:
+
+        unique[
+            item["url"]
+        ] = item
+
+    return list(
+        unique.values()
+    )
+
+
+# ============================================================
+# EJECUTAR TODAS LAS FUENTES
+# ============================================================
 
 async def scrape_all():
 
     results = []
 
-    try:
-        results.extend(await scrape_caba())
-    except Exception:
-        pass
+    source_status = {}
+
+    # --------------------------------------------------------
+    # CABA
+    # --------------------------------------------------------
 
     try:
-        results.extend(await scrape_abc())
-    except Exception:
-        pass
 
-    return results
+        caba_results = await scrape_caba()
 
+        results.extend(
+            caba_results
+        )
+
+        source_status["CABA"] = {
+
+            "ok": True,
+
+            "count": len(
+                caba_results
+            ),
+
+        }
+
+    except Exception as exc:
+
+        source_status["CABA"] = {
+
+            "ok": False,
+
+            "count": 0,
+
+            "error": repr(exc),
+
+        }
+
+    # --------------------------------------------------------
+    # AVELLANEDA
+    # --------------------------------------------------------
+
+    try:
+
+        avellaneda_results = (
+            await scrape_avellaneda_public()
+        )
+
+        results.extend(
+            avellaneda_results
+        )
+
+        source_status[
+            "Avellaneda"
+        ] = {
+
+            "ok": True,
+
+            "count": len(
+                avellaneda_results
+            ),
+
+        }
+
+    except Exception as exc:
+
+        source_status[
+            "Avellaneda"
+        ] = {
+
+            "ok": False,
+
+            "count": 0,
+
+            "error": repr(exc),
+
+        }
+
+    return (
+        results,
+        source_status
+    )
+
+
+# ============================================================
+# RUTAS WEB
+# ============================================================
 
 @app.get("/")
 async def home():
@@ -418,7 +732,10 @@ async def manifest():
 
     return FileResponse(
         FRONTEND / "manifest.webmanifest",
-        media_type="application/manifest+json"
+
+        media_type=(
+            "application/manifest+json"
+        )
     )
 
 
@@ -427,63 +744,125 @@ async def service_worker():
 
     return FileResponse(
         FRONTEND / "sw.js",
-        media_type="application/javascript"
+
+        media_type=(
+            "application/javascript"
+        )
     )
 
+
+# ============================================================
+# API
+# ============================================================
 
 @app.get("/api/oportunidades")
 async def oportunidades():
 
-    return load()
-
-
-@app.post("/api/actualizar")
-async def actualizar():
-
-    database = load()
-
-    old_ids = {
-        item.get("id")
-        for item in database.get("items", [])
-        if item.get("id")
-    }
-
-    fresh = await scrape_all()
-
-    items = []
-
-    now = datetime.now(timezone.utc).isoformat()
-
-    for item in fresh:
-
-        item["id"] = make_id(
-            item.get("source", ""),
-            item.get("url", ""),
-            item.get("titulo", ""),
-            item.get("raw", "")
-        )
-
-        item["nueva"] = item["id"] not in old_ids
-
-        items.append(item)
-
-    data = {
-        "checked_at": now,
-        "items": items
-    }
-
-    save(data)
-
-    return data
+    return load_data()
 
 
 @app.get("/api/salud")
 async def salud():
 
-    data = load()
+    data = load_data()
 
     return {
+
         "ok": True,
-        "checked_at": data.get("checked_at"),
-        "items": len(data.get("items", []))
+
+        "checked_at": data.get(
+            "checked_at"
+        ),
+
+        "items": len(
+            data.get(
+                "items",
+                []
+            )
+        ),
+
+        "source_status": data.get(
+            "source_status",
+            {}
+        ),
     }
+
+
+@app.post("/api/actualizar")
+async def actualizar():
+
+    database = load_data()
+
+    # IDs que ya conocíamos.
+    old_ids = {
+
+        item.get("id")
+
+        for item in database.get(
+            "items",
+            []
+        )
+
+        if item.get("id")
+
+    }
+
+    fresh, source_status = (
+        await scrape_all()
+    )
+
+    now = datetime.now(
+        timezone.utc
+    ).isoformat()
+
+    items = []
+
+    for item in fresh:
+
+        item["id"] = make_id(
+
+            item.get(
+                "source",
+                ""
+            ),
+
+            item.get(
+                "url",
+                ""
+            ),
+
+            item.get(
+                "titulo",
+                ""
+            ),
+
+            item.get(
+                "raw",
+                ""
+            ),
+
+        )
+
+        item["nueva"] = (
+            item["id"]
+            not in old_ids
+        )
+
+        items.append(
+            item
+        )
+
+    data = {
+
+        "checked_at": now,
+
+        "items": items,
+
+        "source_status":
+            source_status,
+
+    }
+
+    save_data(data)
+
+    return data
