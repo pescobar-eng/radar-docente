@@ -16,26 +16,45 @@ from playwright.async_api import async_playwright
 # CONFIGURACIÓN
 # ============================================================
 
-DATA = Path(os.getenv("DATA_FILE", "/data/data.json"))
-FRONTEND = Path("/app/frontend")
+DATA = Path(
+    os.getenv(
+        "DATA_FILE",
+        "/data/data.json"
+    )
+)
 
-CABA_BASE = "https://actopublico.bue.edu.ar/"
-CABA_LIST = "https://actopublico.bue.edu.ar/?todas=true"
+FRONTEND = Path(
+    "/app/frontend"
+)
 
-SAD_AVELLANEDA = "https://www.sadavellaneda.com.ar/"
+CABA_BASE = (
+    "https://actopublico.bue.edu.ar/"
+)
+
+CABA_LIST = (
+    "https://actopublico.bue.edu.ar/"
+)
+
+SAD_AVELLANEDA = (
+    "https://www.sadavellaneda.com.ar/"
+)
 
 
 # ============================================================
-# PALABRAS QUE SÍ NOS INTERESAN
+# TÉRMINOS QUE NOS INTERESAN
 # ============================================================
 
 DANZA_WORDS = [
     "danza",
     "danzas",
     "danza clásica",
+    "danza clasica",
     "danza contemporánea",
+    "danza contemporanea",
     "danzas folklóricas",
+    "danzas folkloricas",
     "danzas folclóricas",
+    "danzas folcloricas",
     "tango",
     "expresión corporal",
     "expresion corporal",
@@ -52,10 +71,12 @@ PRECEPTORIA_WORDS = [
 
 
 # ============================================================
-# APP
+# APLICACIÓN
 # ============================================================
 
-app = FastAPI(title="Radar Docente API")
+app = FastAPI(
+    title="Radar Docente API"
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -66,24 +87,39 @@ app.add_middleware(
 
 
 # ============================================================
-# UTILIDADES
+# FUNCIONES GENERALES
 # ============================================================
 
 def normalize(text):
-    return " ".join((text or "").lower().split())
+    return " ".join(
+        (text or "")
+        .lower()
+        .split()
+    )
 
 
 def clean(text):
-    return re.sub(r"\s+", " ", text or "").strip()
+    return re.sub(
+        r"\s+",
+        " ",
+        text or ""
+    ).strip()
 
 
 def load_data():
+
     if DATA.exists():
+
         try:
+
             return json.loads(
-                DATA.read_text(encoding="utf-8")
+                DATA.read_text(
+                    encoding="utf-8"
+                )
             )
+
         except Exception:
+
             pass
 
     return {
@@ -94,6 +130,7 @@ def load_data():
 
 
 def save_data(data):
+
     DATA.parent.mkdir(
         parents=True,
         exist_ok=True
@@ -109,7 +146,13 @@ def save_data(data):
     )
 
 
-def make_id(source, url, title, raw):
+def make_id(
+    source,
+    url,
+    title,
+    raw=""
+):
+
     value = (
         f"{source}|"
         f"{url}|"
@@ -123,45 +166,30 @@ def make_id(source, url, title, raw):
 
 
 def classify(text):
-    """
-    Devuelve únicamente:
-
-    - Danza
-    - Preceptoría
-    - None
-
-    IMPORTANTE:
-    No usamos "Educación Artística" como criterio,
-    porque eso incluiría Biología, Educación Física,
-    Música, Artes Visuales, etc.
-    """
 
     text = normalize(text)
 
+    # Primero preceptoría.
     for word in PRECEPTORIA_WORDS:
+
         if word in text:
+
             return "Preceptoría"
 
+    # Después danza.
     for word in DANZA_WORDS:
+
         if word in text:
+
             return "Danza"
 
     return None
 
 
-def get_value(lines, labels):
-    """
-    Intenta obtener el valor de una etiqueta.
-
-    Soporta formatos como:
-
-    Asignatura
-    DANZA CLÁSICA
-
-    o:
-
-    Asignatura: DANZA CLÁSICA
-    """
+def get_value(
+    lines,
+    labels
+):
 
     normalized_labels = [
         normalize(label)
@@ -172,30 +200,45 @@ def get_value(lines, labels):
 
         current = normalize(line)
 
+        # -----------------------------------------
         # Formato:
         # Asignatura: DANZA CLÁSICA
+        # -----------------------------------------
+
         for label in normalized_labels:
 
-            if current.startswith(label + ":"):
+            if current.startswith(
+                label + ":"
+            ):
 
-                value = line.split(":", 1)[1].strip()
+                value = line.split(
+                    ":",
+                    1
+                )[1].strip()
 
                 if value:
+
                     return value
 
+        # -----------------------------------------
         # Formato:
         # Asignatura
         # DANZA CLÁSICA
+        # -----------------------------------------
+
         if current in normalized_labels:
 
             if i + 1 < len(lines):
-                return lines[i + 1].strip()
+
+                return lines[
+                    i + 1
+                ].strip()
 
     return ""
 
 
 # ============================================================
-# SCRAPER CABA
+# CABA
 # ============================================================
 
 async def scrape_caba():
@@ -208,24 +251,28 @@ async def scrape_caba():
             headless=True
         )
 
+        seen = set()
+
         # ----------------------------------------------------
-        # Recorremos páginas del listado público
+        # Consultamos las primeras páginas del listado
+        # público de ARTÍSTICA.
         # ----------------------------------------------------
 
-        seen_urls = set()
-
-        for page_number in range(1, 11):
+        for page_number in range(
+            1,
+            21
+        ):
 
             url = (
-                "https://actopublico.bue.edu.ar/"
-                "?areas%5B0%5D=8"
-                "&asignaturas%5B0%5D=0"
-                "&cargos%5B0%5D=0"
-                "&escuelas%5B0%5D=0"
-                "&especialidades%5B0%5D=0"
-                f"&page={page_number}"
-                "&status_carousel=1"
-                "&status_map=1"
+                CABA_BASE
+                + "?areas%5B0%5D=8"
+                + "&asignaturas%5B0%5D=0"
+                + "&cargos%5B0%5D=0"
+                + "&escuelas%5B0%5D=0"
+                + "&especialidades%5B0%5D=0"
+                + f"&page={page_number}"
+                + "&status_carousel=1"
+                + "&status_map=1"
             )
 
             page = await browser.new_page()
@@ -238,71 +285,167 @@ async def scrape_caba():
                     timeout=60000
                 )
 
-                # El listado se completa con JavaScript.
-                await page.wait_for_timeout(5000)
+                await page.wait_for_timeout(
+                    5000
+                )
 
-                # Scroll para activar posibles contenidos lazy.
+                # Scroll para activar contenido dinámico.
                 for _ in range(8):
 
                     await page.mouse.wheel(
                         0,
-                        1600
+                        1800
                     )
 
-                    await page.wait_for_timeout(400)
+                    await page.wait_for_timeout(
+                        400
+                    )
 
-                anchors = await page.locator(
-                    'a[href*="/solicitud/"]'
-                ).evaluate_all(
-                    """
-                    elements => elements.map(
-                        element => ({
-                            href: element.href,
-                            text: (
-                                element.innerText || ""
-                            ).trim()
+                solicitudes = (
+                    await page.locator(
+                        'a[href*="/solicitud/"]'
+                    ).evaluate_all(
+                        """
+                        elements => elements.map(a => {
+
+                            let node = a;
+                            let block = "";
+
+                            for (
+                                let i = 0;
+                                i < 10 && node;
+                                i++
+                            ) {
+
+                                const text =
+                                    (
+                                        node.innerText ||
+                                        ""
+                                    ).trim();
+
+                                if (
+                                    text.includes("Estado:")
+                                    ||
+                                    text.includes("Tipo de acto:")
+                                ) {
+
+                                    block = text;
+                                    break;
+                                }
+
+                                node =
+                                    node.parentElement;
+                            }
+
+                            return {
+                                href: a.href,
+                                label:
+                                    (
+                                        a.innerText ||
+                                        ""
+                                    ).trim(),
+                                block: block
+                            };
                         })
+                        """
                     )
-                    """
                 )
 
             except Exception:
 
                 await page.close()
+
                 continue
 
             await page.close()
 
-            # Si la página no tiene solicitudes,
-            # no seguimos avanzando.
-            if not anchors:
+            # ------------------------------------------------
+            # Si no encontramos solicitudes, terminamos.
+            # ------------------------------------------------
+
+            if not solicitudes:
+
                 break
 
             # ------------------------------------------------
-            # Abrimos cada solicitud
+            # Abrimos cada solicitud.
             # ------------------------------------------------
 
-            for anchor in anchors:
+            for solicitud in solicitudes:
 
-                href = anchor.get(
+                href = solicitud.get(
                     "href",
                     ""
                 )
 
                 label = clean(
-                    anchor.get(
-                        "text",
+                    solicitud.get(
+                        "label",
+                        ""
+                    )
+                )
+
+                block = clean(
+                    solicitud.get(
+                        "block",
                         ""
                     )
                 )
 
                 if not href:
+
                     continue
 
-                if href in seen_urls:
+                if href in seen:
+
                     continue
 
-                seen_urls.add(href)
+                seen.add(href)
+
+                # ------------------------------------------------
+                # Primero filtramos directamente desde el listado.
+                #
+                # Esto evita abrir Biología, Música, Educación
+                # Física, Artes Visuales, etc.
+                # ------------------------------------------------
+
+                texto_listado = (
+                    f"{label} {block}"
+                )
+
+                area_listado = classify(
+                    texto_listado
+                )
+
+                if area_listado is None:
+
+                    continue
+
+                # ------------------------------------------------
+                # Comprobar estado desde el listado.
+                # ------------------------------------------------
+
+                listado_lower = normalize(
+                    texto_listado
+                )
+
+                if (
+                    "asignada"
+                    in listado_lower
+                ):
+
+                    continue
+
+                if (
+                    "cerrada"
+                    in listado_lower
+                ):
+
+                    continue
+
+                # ------------------------------------------------
+                # Abrimos el detalle.
+                # ------------------------------------------------
 
                 detail = await browser.new_page()
 
@@ -318,42 +461,43 @@ async def scrape_caba():
                         1000
                     )
 
-                    detail_text = await detail.locator(
-                        "body"
-                    ).inner_text()
+                    detail_text = (
+                        await detail.locator(
+                            "body"
+                        ).inner_text()
+                    )
 
                 except Exception:
 
                     await detail.close()
+
                     continue
 
                 await detail.close()
 
                 # ------------------------------------------------
-                # Convertimos la ficha en líneas
+                # Extraemos los campos.
                 # ------------------------------------------------
 
                 lines = [
                     clean(line)
-                    for line in detail_text.splitlines()
+                    for line
+                    in detail_text.splitlines()
                     if clean(line)
                 ]
-
-                # ------------------------------------------------
-                # Extraemos campos
-                # ------------------------------------------------
 
                 nombre_cargo = get_value(
                     lines,
                     [
                         "nombre del cargo",
+                        "cargo"
                     ]
                 )
 
                 asignatura = get_value(
                     lines,
                     [
-                        "asignatura",
+                        "asignatura"
                     ]
                 )
 
@@ -362,6 +506,7 @@ async def scrape_caba():
                     [
                         "establecimiento del cargo",
                         "establecimiento",
+                        "escuela"
                     ]
                 )
 
@@ -369,7 +514,7 @@ async def scrape_caba():
                     lines,
                     [
                         "carácter",
-                        "caracter",
+                        "caracter"
                     ]
                 )
 
@@ -378,14 +523,14 @@ async def scrape_caba():
                     [
                         "horas cátedra",
                         "horas",
-                        "módulos",
+                        "módulos"
                     ]
                 )
 
                 nivel = get_value(
                     lines,
                     [
-                        "nivel",
+                        "nivel"
                     ]
                 )
 
@@ -394,95 +539,108 @@ async def scrape_caba():
                     [
                         "fecha de acto público",
                         "fecha de acto",
-                        "acto público",
+                        "acto público"
                     ]
                 )
 
                 # ------------------------------------------------
-                # FILTRO PRINCIPAL
-                #
-                # SOLO usamos:
-                # nombre del cargo + asignatura
-                #
-                # No usamos toda la ficha.
+                # Determinamos la categoría preferentemente
+                # por CARGO + ASIGNATURA.
                 # ------------------------------------------------
 
-                datos_relevantes = (
+                datos_cargo = (
                     f"{nombre_cargo} "
                     f"{asignatura}"
                 )
 
-                area = classify(
-                    datos_relevantes
+                area_detalle = classify(
+                    datos_cargo
                 )
 
-                # No es Danza ni Preceptoría.
-                if area is None:
+                # Si el detalle no permite reconstruirlo,
+                # mantenemos la clasificación del listado.
+                area_final = (
+                    area_detalle
+                    or area_listado
+                )
+
+                if area_final is None:
+
                     continue
 
                 # ------------------------------------------------
-                # Estado
+                # Estado real.
                 # ------------------------------------------------
 
-                estado_texto = normalize(
+                detalle_lower = normalize(
                     detail_text
                 )
 
-                # Fuera de circulación.
-                if "asignada" in estado_texto:
+                if "asignada" in detalle_lower:
+
                     continue
 
-                if "cerrada" in estado_texto:
+                if "cerrada" in detalle_lower:
+
                     continue
 
                 # ------------------------------------------------
-                # Resultado
+                # Guardamos.
                 # ------------------------------------------------
 
                 results.append({
 
-                    "source": "CABA",
+                    "source":
+                        "CABA",
 
-                    "zona": "CABA",
+                    "zona":
+                        "CABA",
 
-                    "area": area,
+                    "area":
+                        area_final,
 
-                    "nivel": nivel,
+                    "nivel":
+                        nivel,
 
-                    "titulo": (
-                        nombre_cargo
-                        or label
-                        or "Oportunidad docente"
-                    ),
+                    "titulo":
+                        (
+                            nombre_cargo
+                            or label
+                            or "Oportunidad docente"
+                        ),
 
-                    "institucion": establecimiento,
+                    "institucion":
+                        establecimiento,
 
-                    "cargo": (
-                        asignatura
-                        or nombre_cargo
-                    ),
+                    "cargo":
+                        (
+                            asignatura
+                            or nombre_cargo
+                        ),
 
-                    "caracter": caracter,
+                    "caracter":
+                        caracter,
 
-                    "horas": horas,
+                    "horas":
+                        horas,
 
-                    "fecha": fecha,
+                    "fecha":
+                        fecha,
 
-                    "estado": (
-                        "Publicada"
-                        if "publicada" in estado_texto
-                        else ""
-                    ),
+                    "estado":
+                        "Publicada",
 
-                    "url": href,
+                    "url":
+                        href,
 
-                    "raw": detail_text[:7000],
+                    "raw":
+                        detail_text[:7000],
                 })
 
         await browser.close()
 
     # --------------------------------------------------------
-    # Eliminar duplicados
+    # Eliminar duplicados.
     # --------------------------------------------------------
 
     unique = {}
@@ -547,19 +705,20 @@ async def scrape_avellaneda_public():
                     continue
 
                 if not label or not href:
+
                     continue
 
-                # ------------------------------------------------
-                # Solamente publicaciones vinculadas con
-                # Danza o Preceptoría.
-                # ------------------------------------------------
-
-                area = classify(label)
+                area = classify(
+                    label
+                )
 
                 if area is None:
+
                     continue
 
-                text = normalize(label)
+                text = normalize(
+                    label
+                )
 
                 if not any(
                     term in text
@@ -569,43 +728,55 @@ async def scrape_avellaneda_public():
                         "cobertura",
                         "convocatoria",
                         "danza",
-                        "preceptor",
+                        "preceptor"
                     ]
                 ):
+
                     continue
 
                 results.append({
 
-                    "source": "SAD Avellaneda",
+                    "source":
+                        "SAD Avellaneda",
 
-                    "zona": "Avellaneda",
+                    "zona":
+                        "Avellaneda",
 
-                    "area": area,
+                    "area":
+                        area,
 
-                    "nivel": "",
+                    "nivel":
+                        "",
 
-                    "titulo": label,
+                    "titulo":
+                        label,
 
-                    "institucion": "",
+                    "institucion":
+                        "",
 
-                    "cargo": "",
+                    "cargo":
+                        "",
 
-                    "caracter": (
-                        "Convocatoria / cobertura"
-                    ),
+                    "caracter":
+                        "Convocatoria / cobertura",
 
-                    "horas": "",
+                    "horas":
+                        "",
 
-                    "fecha": "",
+                    "fecha":
+                        "",
 
-                    "estado": "Publicada",
+                    "estado":
+                        "Publicada",
 
-                    "url": urljoin(
-                        SAD_AVELLANEDA,
-                        href
-                    ),
+                    "url":
+                        urljoin(
+                            SAD_AVELLANEDA,
+                            href
+                        ),
 
-                    "raw": label,
+                    "raw":
+                        label,
                 })
 
         finally:
@@ -626,7 +797,7 @@ async def scrape_avellaneda_public():
 
 
 # ============================================================
-# EJECUTAR TODAS LAS FUENTES
+# TODAS LAS FUENTES
 # ============================================================
 
 async def scrape_all():
@@ -641,32 +812,39 @@ async def scrape_all():
 
     try:
 
-        caba_results = await scrape_caba()
+        caba_results = (
+            await scrape_caba()
+        )
 
         results.extend(
             caba_results
         )
 
-        source_status["CABA"] = {
+        source_status[
+            "CABA"
+        ] = {
 
-            "ok": True,
+            "ok":
+                True,
 
-            "count": len(
-                caba_results
-            ),
-
+            "count":
+                len(caba_results),
         }
 
     except Exception as exc:
 
-        source_status["CABA"] = {
+        source_status[
+            "CABA"
+        ] = {
 
-            "ok": False,
+            "ok":
+                False,
 
-            "count": 0,
+            "count":
+                0,
 
-            "error": repr(exc),
-
+            "error":
+                repr(exc),
         }
 
     # --------------------------------------------------------
@@ -687,12 +865,13 @@ async def scrape_all():
             "Avellaneda"
         ] = {
 
-            "ok": True,
+            "ok":
+                True,
 
-            "count": len(
-                avellaneda_results
-            ),
-
+            "count":
+                len(
+                    avellaneda_results
+                ),
         }
 
     except Exception as exc:
@@ -701,12 +880,14 @@ async def scrape_all():
             "Avellaneda"
         ] = {
 
-            "ok": False,
+            "ok":
+                False,
 
-            "count": 0,
+            "count":
+                0,
 
-            "error": repr(exc),
-
+            "error":
+                repr(exc),
         }
 
     return (
@@ -716,7 +897,7 @@ async def scrape_all():
 
 
 # ============================================================
-# RUTAS WEB
+# PÁGINAS
 # ============================================================
 
 @app.get("/")
@@ -732,7 +913,6 @@ async def manifest():
 
     return FileResponse(
         FRONTEND / "manifest.webmanifest",
-
         media_type=(
             "application/manifest+json"
         )
@@ -744,7 +924,6 @@ async def service_worker():
 
     return FileResponse(
         FRONTEND / "sw.js",
-
         media_type=(
             "application/javascript"
         )
@@ -768,23 +947,27 @@ async def salud():
 
     return {
 
-        "ok": True,
+        "ok":
+            True,
 
-        "checked_at": data.get(
-            "checked_at"
-        ),
-
-        "items": len(
+        "checked_at":
             data.get(
-                "items",
-                []
-            )
-        ),
+                "checked_at"
+            ),
 
-        "source_status": data.get(
-            "source_status",
-            {}
-        ),
+        "items":
+            len(
+                data.get(
+                    "items",
+                    []
+                )
+            ),
+
+        "source_status":
+            data.get(
+                "source_status",
+                {}
+            ),
     }
 
 
@@ -793,12 +976,12 @@ async def actualizar():
 
     database = load_data()
 
-    # IDs que ya conocíamos.
     old_ids = {
 
         item.get("id")
 
-        for item in database.get(
+        for item
+        in database.get(
             "items",
             []
         )
@@ -810,10 +993,6 @@ async def actualizar():
     fresh, source_status = (
         await scrape_all()
     )
-
-    now = datetime.now(
-        timezone.utc
-    ).isoformat()
 
     items = []
 
@@ -840,7 +1019,6 @@ async def actualizar():
                 "raw",
                 ""
             ),
-
         )
 
         item["nueva"] = (
@@ -854,15 +1032,20 @@ async def actualizar():
 
     data = {
 
-        "checked_at": now,
+        "checked_at":
+            datetime.now(
+                timezone.utc
+            ).isoformat(),
 
-        "items": items,
+        "items":
+            items,
 
         "source_status":
             source_status,
-
     }
 
-    save_data(data)
+    save_data(
+        data
+    )
 
     return data
