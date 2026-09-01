@@ -2,11 +2,20 @@ name: Radar Docente
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "0 10 * * *"
 
 jobs:
-  probar:
+  actualizar:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Probar GitHub Actions
-        run: echo "GitHub Actions funciona"
+      - name: Actualizar Radar Docente
+        run: |
+          echo "Actualizando Radar Docente..."
+          curl --fail-with-body \
+            --request POST \
+            --max-time 300 \
+            https://radar-docente-production.up.railway.app/api/actualizar
+          echo ""
+          echo "Radar actualizado correctamente."
