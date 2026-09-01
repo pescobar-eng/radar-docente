@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urljoin
 
-from fastapi import FastAPI
+from fastapi import FastAPI, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from playwright.async_api import async_playwright
@@ -26,13 +26,11 @@ DATA = Path(
 FRONTEND = Path("/app/frontend")
 
 CABA_BASE = "https://actopublico.bue.edu.ar/"
-CABA_LIST = "https://actopublico.bue.edu.ar/"
-
 SAD_AVELLANEDA = "https://www.sadavellaneda.com.ar/"
 
 
 # ============================================================
-# PALABRAS DE INTERÉS
+# TÉRMINOS DE BÚSQUEDA
 # ============================================================
 
 DANZA_WORDS = [
@@ -83,9 +81,7 @@ app.add_middleware(
 
 def normalize(text):
     return " ".join(
-        (text or "")
-        .lower()
-        .split()
+        (text or "").lower().split()
     )
 
 
@@ -164,18 +160,16 @@ def classify(text):
 
     text = normalize(text)
 
-    # Preceptoría
+    # Primero preceptoría.
     for word in PRECEPTORIA_WORDS:
 
         if word in text:
-
             return "Preceptoría"
 
-    # Danza
+    # Después danza.
     for word in DANZA_WORDS:
 
         if word in text:
-
             return "Danza"
 
     return None
@@ -191,19 +185,21 @@ def get_value(
 ):
 
     """
-    Busca una etiqueta en la ficha.
+    Busca valores en distintos formatos posibles.
 
-    Soporta:
+    Ejemplo 1:
 
         Asignatura
         DANZA CLÁSICA
 
-    y:
+    Ejemplo 2:
 
         Asignatura: DANZA CLÁSICA
 
-    También soporta etiquetas cuyo valor aparece
-    después de líneas vacías.
+    Ejemplo 3:
+
+        Asignatura:
+        DANZA CLÁSICA
     """
 
     labels = [
@@ -217,44 +213,46 @@ def get_value(
 
         for label in labels:
 
-            # -----------------------------------------------
-            # Caso:
+            # ------------------------------------------------
+            # Formato:
             # Asignatura: DANZA CLÁSICA
-            # -----------------------------------------------
+            # ------------------------------------------------
 
             prefix = label + ":"
 
             if current.startswith(prefix):
 
-                value = line.split(
-                    ":",
-                    1
-                )[1].strip()
+                value = (
+                    line
+                    .split(":", 1)[1]
+                    .strip()
+                )
 
                 if value:
-
                     return value
 
-                # La etiqueta existe, pero el valor
-                # está en la siguiente línea.
+                # La etiqueta está sola.
+                # Buscamos el siguiente valor.
                 j = i + 1
 
                 while j < len(lines):
 
-                    next_value = lines[j].strip()
+                    next_value = (
+                        lines[j]
+                        .strip()
+                    )
 
                     if next_value:
-
                         return next_value
 
                     j += 1
 
-            # -----------------------------------------------
-            # Caso:
-            # Asignatura
+            # ------------------------------------------------
+            # Formato:
             #
+            # Asignatura
             # DANZA CLÁSICA
-            # -----------------------------------------------
+            # ------------------------------------------------
 
             if current == label:
 
@@ -262,10 +260,12 @@ def get_value(
 
                 while j < len(lines):
 
-                    next_value = lines[j].strip()
+                    next_value = (
+                        lines[j]
+                        .strip()
+                    )
 
                     if next_value:
-
                         return next_value
 
                     j += 1
@@ -299,14 +299,10 @@ async def scrape_caba():
         seen_urls = set()
 
         # ----------------------------------------------------
-        # Recorremos páginas del listado público de
-        # ARTÍSTICA.
+        # Recorremos hasta 20 páginas del filtro ARTÍSTICA.
         # ----------------------------------------------------
 
-        for page_number in range(
-            1,
-            21
-        ):
+        for page_number in range(1, 21):
 
             url = (
                 CABA_BASE
@@ -330,13 +326,11 @@ async def scrape_caba():
                     timeout=60000
                 )
 
-                # Esperar a que el contenido dinámico
-                # termine de cargar.
                 await page.wait_for_timeout(
                     5000
                 )
 
-                # Scroll para activar posibles cargas lazy.
+                # Activamos contenido dinámico.
                 for _ in range(8):
 
                     await page.mouse.wheel(
@@ -357,7 +351,6 @@ async def scrape_caba():
                             a => {
 
                                 let node = a;
-
                                 let block = "";
 
                                 for (
@@ -412,18 +405,16 @@ async def scrape_caba():
             except Exception:
 
                 await page.close()
-
                 continue
 
             await page.close()
 
-            # No encontramos solicitudes.
+            # Si no hay solicitudes, terminamos.
             if not solicitudes:
-
                 break
 
             # ------------------------------------------------
-            # Procesamos cada solicitud.
+            # Procesar solicitudes.
             # ------------------------------------------------
 
             for solicitud in solicitudes:
@@ -456,7 +447,7 @@ async def scrape_caba():
                 seen_urls.add(href)
 
                 # ------------------------------------------------
-                # Abrimos la ficha individual.
+                # Abrir ficha individual.
                 # ------------------------------------------------
 
                 detail = await browser.new_page()
@@ -482,17 +473,20 @@ async def scrape_caba():
                 except Exception:
 
                     await detail.close()
-
                     continue
 
                 await detail.close()
+
+                # ------------------------------------------------
+                # Convertir ficha a líneas.
+                # ------------------------------------------------
 
                 lines = extract_lines(
                     detail_text
                 )
 
                 # ------------------------------------------------
-                # DATOS DE LA FICHA
+                # Extraer datos.
                 # ------------------------------------------------
 
                 estado = get_value(
@@ -541,7 +535,8 @@ async def scrape_caba():
                 establecimiento = get_value(
                     lines,
                     [
-                        "establecimiento del cargo"
+                        "establecimiento del cargo",
+                        "establecimiento"
                     ]
                 )
 
@@ -570,48 +565,51 @@ async def scrape_caba():
                 horas = get_value(
                     lines,
                     [
-                        "horas cátedra"
+                        "horas cátedra",
+                        "horas"
+                    ]
+                )
+
+                nivel = get_value(
+                    lines,
+                    [
+                        "nivel"
                     ]
                 )
 
                 fecha = get_value(
                     lines,
                     [
-                        "fecha de acto público"
+                        "fecha de acto público",
+                        "fecha de acto",
+                        "acto público"
                     ]
                 )
 
                 # ------------------------------------------------
-                # FILTRO
-                #
-                # Para clasificar usamos principalmente:
+                # FILTRO:
                 # cargo + asignatura.
-                #
-                # Si alguno de esos campos está vacío,
-                # utilizamos el área oficial como respaldo.
                 # ------------------------------------------------
 
                 datos = normalize(
-                    " ".join([
-                        nombre_cargo,
-                        asignatura
-                    ])
+                    f"{nombre_cargo} {asignatura}"
                 )
 
                 area = classify(
                     datos
                 )
 
+                # Si esos campos no alcanzan, usamos el listado
+                # como respaldo.
                 if area is None:
 
                     area = classify(
-                        area_oficial
+                        f"{label} {block}"
                     )
 
-                # Si sigue sin ser Danza ni Preceptoría,
+                # Si sigue sin ser Danza o Preceptoría,
                 # descartamos.
                 if area is None:
-
                     continue
 
                 # ------------------------------------------------
@@ -628,11 +626,10 @@ async def scrape_caba():
                     "desistida",
                     "baja",
                 ]:
-
                     continue
 
                 # ------------------------------------------------
-                # Título
+                # Título.
                 # ------------------------------------------------
 
                 titulo = (
@@ -644,7 +641,7 @@ async def scrape_caba():
                 )
 
                 # ------------------------------------------------
-                # Guardamos
+                # Guardamos.
                 # ------------------------------------------------
 
                 results.append({
@@ -659,7 +656,8 @@ async def scrape_caba():
                         area,
 
                     "nivel":
-                        area_oficial,
+                        nivel
+                        or area_oficial,
 
                     "titulo":
                         titulo,
@@ -715,14 +713,9 @@ async def scrape_caba():
 
     for item in results:
 
-        key = item.get(
-            "url",
-            item.get(
-                "titulo"
-            )
-        )
-
-        unique[key] = item
+        unique[
+            item["url"]
+        ] = item
 
     return list(
         unique.values()
@@ -780,7 +773,6 @@ async def scrape_avellaneda_public():
                     continue
 
                 if not label or not href:
-
                     continue
 
                 area = classify(
@@ -788,7 +780,6 @@ async def scrape_avellaneda_public():
                 )
 
                 if area is None:
-
                     continue
 
                 text = normalize(
@@ -806,7 +797,6 @@ async def scrape_avellaneda_public():
                         "preceptor",
                     ]
                 ):
-
                     continue
 
                 results.append({
@@ -872,7 +862,7 @@ async def scrape_avellaneda_public():
 
 
 # ============================================================
-# TODAS LAS FUENTES
+# SCRAPING GENERAL
 # ============================================================
 
 async def scrape_all():
@@ -906,7 +896,6 @@ async def scrape_all():
                 len(
                     caba_results
                 ),
-
         }
 
     except Exception as exc:
@@ -923,11 +912,10 @@ async def scrape_all():
 
             "error":
                 repr(exc),
-
         }
 
     # --------------------------------------------------------
-    # AVELLANEDA
+    # Avellaneda
     # --------------------------------------------------------
 
     try:
@@ -951,7 +939,6 @@ async def scrape_all():
                 len(
                     avellaneda_results
                 ),
-
         }
 
     except Exception as exc:
@@ -968,13 +955,95 @@ async def scrape_all():
 
             "error":
                 repr(exc),
-
         }
 
     return (
         results,
         source_status
     )
+
+
+# ============================================================
+# ACTUALIZACIÓN
+# ============================================================
+
+async def ejecutar_actualizacion():
+
+    database = load_data()
+
+    old_ids = {
+
+        item.get("id")
+
+        for item
+        in database.get(
+            "items",
+            []
+        )
+
+        if item.get("id")
+
+    }
+
+    fresh, source_status = (
+        await scrape_all()
+    )
+
+    items = []
+
+    for item in fresh:
+
+        item["id"] = make_id(
+
+            item.get(
+                "source",
+                ""
+            ),
+
+            item.get(
+                "url",
+                ""
+            ),
+
+            item.get(
+                "titulo",
+                ""
+            ),
+
+            item.get(
+                "raw",
+                ""
+            ),
+        )
+
+        item["nueva"] = (
+            item["id"]
+            not in old_ids
+        )
+
+        items.append(
+            item
+        )
+
+    data = {
+
+        "checked_at":
+            datetime.now(
+                timezone.utc
+            ).isoformat(),
+
+        "items":
+            items,
+
+        "source_status":
+            source_status,
+    }
+
+    save_data(
+        data
+    )
+
+    return data
 
 
 # ============================================================
@@ -1058,84 +1127,50 @@ async def salud():
     }
 
 
+# ============================================================
+# ACTUALIZACIÓN MANUAL
+#
+# La usa el botón "Actualizar ahora".
+#
+# Esta ruta espera a que termine el scraping.
+# ============================================================
+
 @app.post(
     "/api/actualizar"
 )
 async def actualizar():
 
-    database = load_data()
+    return await ejecutar_actualizacion()
 
-    old_ids = {
 
-        item.get("id")
+# ============================================================
+# ACTUALIZACIÓN DIARIA
+#
+# Esta ruta la llama GitHub Actions.
+#
+# Responde inmediatamente y deja el scraping corriendo
+# en segundo plano, evitando el timeout 502 de Railway.
+# ============================================================
 
-        for item
-        in database.get(
-            "items",
-            []
-        )
+@app.post(
+    "/api/actualizar-diario"
+)
+async def actualizar_diario(
+    background_tasks: BackgroundTasks
+):
 
-        if item.get("id")
-
-    }
-
-    fresh, source_status = (
-        await scrape_all()
+    background_tasks.add_task(
+        ejecutar_actualizacion
     )
 
-    items = []
+    return {
 
-    for item in fresh:
+        "ok":
+            True,
 
-        item["id"] = make_id(
+        "status":
+            "started",
 
-            item.get(
-                "source",
-                ""
-            ),
-
-            item.get(
-                "url",
-                ""
-            ),
-
-            item.get(
-                "titulo",
-                ""
-            ),
-
-            item.get(
-                "raw",
-                ""
-            ),
-
-        )
-
-        item["nueva"] = (
-            item["id"]
-            not in old_ids
-        )
-
-        items.append(
-            item
-        )
-
-    data = {
-
-        "checked_at":
-            datetime.now(
-                timezone.utc
-            ).isoformat(),
-
-        "items":
-            items,
-
-        "source_status":
-            source_status,
+        "message":
+            "Actualización iniciada en segundo plano",
     }
-
-    save_data(
-        data
-    )
-
-    return data
