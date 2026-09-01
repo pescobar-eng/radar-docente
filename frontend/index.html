@@ -10,7 +10,7 @@ body{margin:0;background:#f4f6f8;color:#17202a;font-family:system-ui}header{back
 <div class="filters"><select id="zona"><option value="">CABA + Avellaneda</option><option>CABA</option><option>Avellaneda</option></select><select id="area"><option value="">Todas</option><option>Danza</option><option>Educación Artística</option><option>Preceptoría</option></select><input id="q" placeholder="Buscar…"></div>
 <section id="list"></section></main>
 <script>
-const API=(localStorage.getItem("radar_api")||"http://localhost:8000/api");
+const API="/api";
 async function cargar(){
  try{let r=await fetch(API+"/oportunidades",{cache:"no-store"});let d=await r.json();window.db=d;render();$("msg").textContent="Monitor conectado.";}
  catch(e){$("msg").textContent="No se pudo conectar al monitor. Configurá la URL del servidor en radar_api."}
