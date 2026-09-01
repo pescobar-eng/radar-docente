@@ -186,12 +186,15 @@ async def scrape_caba():
 
                     text = detail_text.lower()
 
-                    area = classify(detail_text)
+                                        area = classify(detail_text)
 
-if area is None:
-    continue
+                    # Solo aceptamos Danza o Preceptoría.
+                    # Todo lo demás (Biología, Música, Educación Física,
+                    # Artes Visuales, etc.) queda fuera.
+                    if area is None:
+                        continue
 
-                    # No mostrar cargos que ya fueron asignados.
+                    # No mostrar cargos ya asignados.
                     if "asignada" in text:
                         continue
 
@@ -207,7 +210,6 @@ if area is None:
 
                     def buscar(etiquetas):
                         for i, line in enumerate(lines):
-
                             normal = line.lower()
 
                             if any(
@@ -218,10 +220,7 @@ if area is None:
                                     return lines[i + 1]
 
                         return ""
-
-                    # Determinar el área.
-                    
-
+                        
                     results.append({
                         "source": "CABA",
                         "zona": "CABA",
