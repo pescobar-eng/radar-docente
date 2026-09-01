@@ -184,42 +184,127 @@ async def scrape_caba():
 
                     await detail.close()
 
-                    text = detail_text.lower()
-
-                    area = classify(detail_text)
-
-                    # Solo aceptamos Danza o Preceptoría.
-                    # Todo lo demás (Biología, Música, Educación Física,
-                    # Artes Visuales, etc.) queda fuera.
-                    if area is None:
-                        continue
-
-                    # No mostrar cargos ya asignados.
-                    if "asignada" in text:
-                        continue
-
-                    # No mostrar cargos cerrados.
-                    if "cerrada" in text:
-                        continue
-
+                    # Extraemos primero los campos concretos de la ficha.
                     lines = [
                         line.strip()
                         for line in detail_text.splitlines()
                         if line.strip()
                     ]
 
-                    def buscar(etiquetas):
-                        for i, line in enumerate(lines):
-                            normal = line.lower()
+                    def buscar_exacto(etiqueta):
+                        etiqueta = etiqueta.lower()
 
-                            if any(
-                                etiqueta in normal
-                                for etiqueta in etiquetas
-                            ):
+                        for i, line in enumerate(lines):
+                            if line.lower().strip() == etiqueta:
                                 if i + 1 < len(lines):
-                                    return lines[i + 1]
+                                    return lines[i + 1].strip()
 
                         return ""
+
+                    nombre_cargo = buscar_exacto("nombre del cargo")
+                    asignatura = buscar_exacto("asignatura")
+                    area_oficial = buscar_exacto("área")
+                    institucion = buscar_exacto(
+                        "establecimiento del cargo"
+                    )
+                    caracter = buscar_exacto("caracter")
+                    if not caracter:
+                        caracter = buscar_exacto("carácter")
+
+                    horas = buscar_exacto("horas cátedra")
+
+                    fecha = buscar_exacto(
+                        "fecha de acto público"
+                    )
+
+                    # Para decidir si nos interesa la oferta,
+                    # usamos CARGO + ASIGNATURA, no toda la página.
+                    datos_cargo = (
+                        f"{nombre_cargo} "
+                        f"{asignatura}"
+                    ).lower()
+
+                    es_preceptor = any(
+                        palabra in datos_cargo
+                        for palabra in [
+                            "preceptor",
+                            "preceptora",
+                            "jefe de preceptores",
+                            "jefa de preceptores",
+                        ]
+                    )
+
+                    es_danza = any(
+                        palabra in datos_cargo
+                        for palabra in [
+                            "danza",
+                            "danzas",
+                            "tango",
+                            "expresión corporal",
+                            "expresion corporal",
+                        ]
+                    )
+
+                    # Si no es Danza ni Preceptoría, descartamos.
+                    if not es_preceptor and not es_danza:
+                        continue
+
+                    if es_preceptor:
+                        area = "Preceptoría"
+                    else:
+                        area = "Danza"
+
+                    text = detail_text.lower()
+
+                    # No mostrar cargos ya asignados.
+                    if "estado:" in text and "asignada" in text:
+                        continue
+
+                    # No mostrar cargos cerrados.
+                    if "estado:" in text and "cerrada" in text:
+                        continue
+
+                    results.append({
+                        "source": "CABA",
+                        "zona": "CABA",
+                        "area": area,
+
+                        "nivel": (
+                            "Todos"
+                            if not buscar_exacto("nivel")
+                            else buscar_exacto("nivel")
+                        ),
+
+                        "titulo": (
+                            label
+                            or nombre_cargo
+                            or "Oportunidad docente CABA"
+                        ),
+
+                        "institucion": institucion,
+
+                        "cargo": (
+                            asignatura
+                            if asignatura
+                            else nombre_cargo
+                        ),
+
+                        "caracter": caracter,
+
+                        "horas": horas,
+
+                        "fecha": fecha,
+
+                        "estado": (
+                            "Publicada"
+                            if "publicada" in text
+                            else ""
+                        ),
+
+                        "url": href,
+
+                        "raw": detail_text[:7000]
+                    })
                         
                     results.append({
                         "source": "CABA",
