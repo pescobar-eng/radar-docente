@@ -1,9 +1,9 @@
 name: Radar Docente - actualización diaria
 
 on:
+  workflow_dispatch:
   schedule:
     - cron: "0 10 * * *"
-  workflow_dispatch:
 
 jobs:
   actualizar:
@@ -11,8 +11,12 @@ jobs:
 
     steps:
       - name: Actualizar Radar Docente
+        shell: bash
         run: |
-          curl -X POST \
-            --fail \
+          echo "Actualizando Radar Docente..."
+          curl --fail-with-body \
+            --request POST \
             --max-time 300 \
             https://radar-docente-production.up.railway.app/api/actualizar
+          echo ""
+          echo "Radar actualizado."
