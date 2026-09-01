@@ -186,7 +186,7 @@ async def scrape_caba():
 
                     text = detail_text.lower()
 
-                                        area = classify(detail_text)
+                    area = classify(detail_text)
 
                     # Solo aceptamos Danza o Preceptoría.
                     # Todo lo demás (Biología, Música, Educación Física,
