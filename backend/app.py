@@ -186,21 +186,10 @@ async def scrape_caba():
 
                     text = detail_text.lower()
 
-                    # Solo nuestras áreas.
-                    if not any(
-                        palabra in text
-                        for palabra in [
-                            "danza",
-                            "danzas",
-                            "tango",
-                            "educación artística",
-                            "artistica",
-                            "artística",
-                            "preceptor",
-                            "preceptora",
-                        ]
-                    ):
-                        continue
+                    area = classify(detail_text)
+
+if area is None:
+    continue
 
                     # No mostrar cargos que ya fueron asignados.
                     if "asignada" in text:
@@ -231,20 +220,7 @@ async def scrape_caba():
                         return ""
 
                     # Determinar el área.
-                    if (
-                        "preceptor" in text
-                        or "preceptora" in text
-                    ):
-                        area = "Preceptoría"
-
-                    elif (
-                        "danza" in text
-                        or "tango" in text
-                    ):
-                        area = "Danza"
-
-                    else:
-                        area = "Educación Artística"
+                    
 
                     results.append({
                         "source": "CABA",
