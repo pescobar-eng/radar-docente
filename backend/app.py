@@ -306,58 +306,7 @@ async def scrape_caba():
                         "raw": detail_text[:7000]
                     })
                         
-                    results.append({
-                        "source": "CABA",
-                        "zona": "CABA",
-                        "area": area,
-
-                        "nivel": buscar([
-                            "nivel"
-                        ]),
-
-                        "titulo": label
-                            or "Oportunidad docente CABA",
-
-                        "institucion": buscar([
-                            "establecimiento",
-                            "escuela"
-                        ]),
-
-                        "cargo": buscar([
-                            "nombre del cargo",
-                            "cargo a cubrir",
-                            "cargo",
-                            "asignatura",
-                            "especialidad"
-                        ]),
-
-                        "caracter": buscar([
-                            "carácter",
-                            "caracter"
-                        ]),
-
-                        "horas": buscar([
-                            "horas cátedra",
-                            "horas",
-                            "módulos"
-                        ]),
-
-                        "fecha": buscar([
-                            "fecha de acto público",
-                            "fecha de acto",
-                            "acto público"
-                        ]),
-
-                        "estado": (
-                            "Publicada"
-                            if "publicada" in text
-                            else ""
-                        ),
-
-                        "url": href,
-
-                        "raw": detail_text[:7000]
-                    })
+                    
 
                 await page.close()
 
