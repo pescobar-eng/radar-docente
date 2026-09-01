@@ -74,13 +74,19 @@ def make_id(source, url, title, raw=""):
 def classify(text):
     text = norm(text)
 
-    if "danz" in text or "tango" in text:
-        return "Danza"
-
     if "preceptor" in text:
         return "Preceptoría"
 
-    return "Educación Artística"
+    if any(word in text for word in [
+        "danza",
+        "danzas",
+        "tango",
+        "expresión corporal",
+        "expresion corporal"
+    ]):
+        return "Danza"
+
+    return None
 
 
 async def scrape_caba():
