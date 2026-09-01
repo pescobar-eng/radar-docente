@@ -93,50 +93,134 @@ async def scrape_caba():
 
         await page.goto(
             CABA_URL,
-            wait_until="domcontentloaded",
+            wait_until="networkidle",
             timeout=60000
         )
 
-        await page.wait_for_timeout(2500)
+        await page.wait_for_timeout(3000)
+
+        # El listado público contiene enlaces de tipo /solicitud/ID
+        links = await page.locator('a[href*="/solicitud/"]').all()
 
         seen = set()
 
-        for link in await page.locator("a").all():
+        for link in links:
             try:
-                title = (await link.inner_text()).strip()
                 href = await link.get_attribute("href")
+                label = (await link.inner_text()).strip()
             except Exception:
                 continue
 
-            if not title or not href:
+            if not href:
                 continue
 
             if href.startswith("/"):
                 href = "https://actopublico.bue.edu.ar" + href
 
-            text = norm(title)
+            if href in seen:
+                continue
 
-            if any(keyword in text for keyword in KEYWORDS):
-                if href in seen:
+            seen.add(href)
+
+            try:
+                detail = await browser.new_page()
+
+                await detail.goto(
+                    href,
+                    wait_until="networkidle",
+                    timeout=30000
+                )
+
+                await detail.wait_for_timeout(1000)
+
+                body = await detail.locator("body").inner_text()
+
+                await detail.close()
+
+            except Exception:
+                continue
+
+            body_lower = body.lower()
+
+            # Solo interesan las oportunidades que nos corresponden.
+            interesa = any(
+                palabra in body_lower
+                for palabra in [
+                    "danza",
+                    "danzas",
+                    "tango",
+                    "educación artística",
+                    "preceptor",
+                    "preceptora"
+                ]
+            )
+
+            if not interesa:
+                continue
+
+            # No mostrar oportunidades que ya fueron asignadas.
+            if "estado:" in body_lower and "asignada" in body_lower:
+                if "publicada" not in body_lower:
                     continue
 
-                seen.add(href)
+            def buscar(candidatos):
+                lineas = [
+                    linea.strip()
+                    for linea in body.splitlines()
+                    if linea.strip()
+                ]
 
-                results.append({
-                    "source": "CABA",
-                    "zona": "CABA",
-                    "area": classify(text),
-                    "nivel": "Todos",
-                    "titulo": title,
-                    "institucion": "",
-                    "cargo": "",
-                    "caracter": "",
-                    "horas": "",
-                    "fecha": "",
-                    "estado": "",
-                    "url": href,
-                    "raw": title,
-                })
+                for i, linea in enumerate(lineas):
+                    texto = linea.lower()
+
+                    for candidato in candidatos:
+                        if candidato in texto:
+                            if i + 1 < len(lineas):
+                                return lineas[i + 1]
+
+                return ""
+
+            results.append({
+                "source": "CABA",
+                "zona": "CABA",
+                "area": (
+                    "Danza"
+                    if ("danza" in body_lower or "tango" in body_lower)
+                    else "Preceptoría"
+                ),
+                "nivel": buscar([
+                    "nivel"
+                ]),
+                "titulo": label or "Oportunidad docente CABA",
+                "institucion": buscar([
+                    "establecimiento del cargo",
+                    "escuela"
+                ]),
+                "cargo": buscar([
+                    "nombre del cargo",
+                    "cargo a cubrir",
+                    "cargo"
+                ]),
+                "caracter": buscar([
+                    "caracter",
+                    "carácter"
+                ]),
+                "horas": buscar([
+                    "horas cátedra",
+                    "horas"
+                ]),
+                "fecha": buscar([
+                    "fecha de acto público",
+                    "fecha de acto"
+                ]),
+                "estado": (
+                    "Publicada"
+                    if "publicada" in body_lower
+                    else ""
+                ),
+                "url": href,
+                "raw": body[:6000]
+            })
 
         await browser.close()
 
