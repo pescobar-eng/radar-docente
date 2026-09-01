@@ -6,6 +6,7 @@ on:
 jobs:
   probar:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Probar conexión
+      - name: Probar GitHub Actions
         run: echo "GitHub Actions funciona"
