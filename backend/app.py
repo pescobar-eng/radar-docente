@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urljoin
 
-from fastapi import FastAPI, BackgroundTasks
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from playwright.async_api import async_playwright
@@ -23,39 +23,35 @@ DATA = Path(
     )
 )
 
-# Si Railway no permite escribir /data, usamos una carpeta local.
-FALLBACK_DATA = Path(__file__).resolve().parent / "data.json"
+FALLBACK_DATA = (
+    Path(__file__).resolve().parent / "data.json"
+)
 
 FRONTEND = Path("/app/frontend")
 
-CABA_BASE = "https://actopublico.bue.edu.ar/"
-SAD_AVELLANEDA = "https://www.sadavellaneda.com.ar/"
+CABA_BASE = (
+    "https://actopublico.bue.edu.ar/"
+)
 
-# Portal APD de Provincia de Buenos Aires.
-APD_PBA = "https://servicios.abc.gov.ar/actos.publicos.digitales/"
+SAD_AVELLANEDA = (
+    "https://www.sadavellaneda.com.ar/"
+)
 
+APD_PBA = (
+    "https://servicios.abc.gov.ar/"
+    "actos.publicos.digitales/"
+)
 
-# ============================================================
-# CONFIGURACIÓN DEL SCRAPER
-# ============================================================
-
-# Máxima cantidad de páginas que recorreremos.
-#
-# NO significa que solamente haya que recorrer esta cantidad.
-# El scraper intenta descubrir la cantidad real de páginas.
-#
-# Este límite funciona como protección ante cambios del sitio.
 MAX_CABA_PAGES = 100
 
-# Tiempo de espera de navegación.
 PAGE_TIMEOUT = 60000
 
-# Espera para que cargue Javascript.
-DYNAMIC_WAIT = 2500
+# No hace falta esperar varios segundos en cada página.
+DYNAMIC_WAIT = 700
 
 
 # ============================================================
-# TÉRMINOS DE BÚSQUEDA
+# TÉRMINOS
 # ============================================================
 
 DANZA_WORDS = [
@@ -91,10 +87,6 @@ PRECEPTORIA_WORDS = [
 EDUCACION_ARTISTICA_WORDS = [
     "educación artística",
     "educacion artistica",
-    "educación artística - música",
-    "educacion artistica - musica",
-    "educación artística - artes visuales",
-    "educacion artistica - artes visuales",
     "artes visuales",
     "artes plásticas",
     "artes plasticas",
@@ -104,6 +96,43 @@ EDUCACION_ARTISTICA_WORDS = [
     "artes",
     "artístico",
     "artistico",
+    "plástica",
+    "plastica",
+]
+
+
+# Materias que NO deben entrar como Educación Artística
+# aunque la institución tenga Área ARTISTICA.
+
+NON_ARTISTIC_SUBJECTS = [
+    "matemática",
+    "matematica",
+    "matemáticas",
+    "matematicas",
+    "física",
+    "fisica",
+    "química",
+    "quimica",
+    "biología",
+    "biologia",
+    "lengua",
+    "literatura",
+    "inglés",
+    "ingles",
+    "francés",
+    "frances",
+    "historia",
+    "geografía",
+    "geografia",
+    "economía",
+    "economia",
+    "contabilidad",
+    "informática",
+    "informatica",
+    "computación",
+    "computacion",
+    "ciencias naturales",
+    "ciencias sociales",
 ]
 
 
@@ -115,7 +144,6 @@ app = FastAPI(
     title="Radar Docente API"
 )
 
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -125,15 +153,10 @@ app.add_middleware(
 
 
 # ============================================================
-# UTILIDADES GENERALES
+# UTILIDADES
 # ============================================================
 
 def normalize(text):
-    """
-    Normaliza texto para poder comparar sin problemas
-    de mayúsculas, acentos, espacios, etc.
-    """
-
     text = text or ""
 
     replacements = {
@@ -155,10 +178,6 @@ def normalize(text):
 
 
 def clean(text):
-    """
-    Limpia espacios y saltos de línea.
-    """
-
     return re.sub(
         r"\s+",
         " ",
@@ -167,20 +186,15 @@ def clean(text):
 
 
 def extract_lines(text):
-    """
-    Convierte el texto de una página en líneas limpias.
-    """
-
-    lines = []
+    result = []
 
     for line in (text or "").splitlines():
+        line = clean(line)
 
-        value = clean(line)
+        if line:
+            result.append(line)
 
-        if value:
-            lines.append(value)
-
-    return lines
+    return result
 
 
 def now_iso():
@@ -190,15 +204,10 @@ def now_iso():
 
 
 # ============================================================
-# PERSISTENCIA
+# DATOS
 # ============================================================
 
 def get_data_file():
-    """
-    Usa /data/data.json en Railway.
-
-    Si no puede utilizarse, usa backend/data.json.
-    """
 
     try:
 
@@ -207,14 +216,14 @@ def get_data_file():
             exist_ok=True
         )
 
-        test_file = DATA.parent / ".write_test"
+        test = DATA.parent / ".write_test"
 
-        test_file.write_text(
+        test.write_text(
             "ok",
             encoding="utf-8"
         )
 
-        test_file.unlink(
+        test.unlink(
             missing_ok=True
         )
 
@@ -244,27 +253,24 @@ def load_data():
                 )
             )
 
-            if not isinstance(data, dict):
-                raise ValueError(
-                    "El archivo de datos no contiene un objeto JSON."
+            if isinstance(data, dict):
+
+                data.setdefault(
+                    "checked_at",
+                    None
                 )
 
-            data.setdefault(
-                "checked_at",
-                None
-            )
+                data.setdefault(
+                    "items",
+                    []
+                )
 
-            data.setdefault(
-                "items",
-                []
-            )
+                data.setdefault(
+                    "source_status",
+                    {}
+                )
 
-            data.setdefault(
-                "source_status",
-                {}
-            )
-
-            return data
+                return data
 
         except Exception:
             pass
@@ -285,11 +291,11 @@ def save_data(data):
         exist_ok=True
     )
 
-    temp_path = path.with_suffix(
+    tmp = path.with_suffix(
         ".tmp"
     )
 
-    temp_path.write_text(
+    tmp.write_text(
         json.dumps(
             data,
             ensure_ascii=False,
@@ -298,31 +304,17 @@ def save_data(data):
         encoding="utf-8"
     )
 
-    temp_path.replace(path)
+    tmp.replace(path)
 
 
 # ============================================================
 # ID ESTABLE
 # ============================================================
 
-def make_id(
-    source,
-    url,
-    title=""
-):
-    """
-    El ID se basa principalmente en la URL oficial.
-
-    Esto es MUY importante:
-    si cambian las horas o algún dato de una oferta,
-    sigue siendo la misma oferta y no aparece como una
-    oferta completamente nueva.
-    """
+def make_id(source, url):
 
     value = (
-        f"{source}|"
-        f"{url}|"
-        f"{title}"
+        f"{source}|{url}"
     )
 
     return hashlib.sha256(
@@ -334,32 +326,24 @@ def make_id(
 # CLASIFICACIÓN
 # ============================================================
 
+def contains_any(text, words):
+
+    text = normalize(text)
+
+    for word in words:
+
+        if normalize(word) in text:
+            return True
+
+    return False
+
+
 def classify(
     cargo="",
     asignatura="",
     area_oficial="",
-    especialidad="",
-    institucion="",
-    raw=""
+    especialidad=""
 ):
-    """
-    Determina si una oferta pertenece a:
-
-    - Danza
-    - Educación Artística
-    - Preceptoría
-
-    IMPORTANTE:
-    No clasificamos solamente por el nombre de la escuela.
-    Eso generaba falsos positivos.
-
-    Se priorizan:
-    cargo
-    asignatura
-    área
-    especialidad
-    y solamente como último respaldo el texto completo.
-    """
 
     cargo_n = normalize(cargo)
     asignatura_n = normalize(asignatura)
@@ -370,115 +354,82 @@ def classify(
     # PRECEPTORÍA
     # --------------------------------------------------------
 
-    for word in PRECEPTORIA_WORDS:
+    if contains_any(
+        cargo_n,
+        PRECEPTORIA_WORDS
+    ):
+        return "Preceptoría"
 
-        word_n = normalize(word)
-
-        if (
-            word_n in cargo_n
-            or word_n in asignatura_n
-        ):
-            return "Preceptoría"
+    if contains_any(
+        asignatura_n,
+        PRECEPTORIA_WORDS
+    ):
+        return "Preceptoría"
 
     # --------------------------------------------------------
     # DANZA
     # --------------------------------------------------------
 
-    for word in DANZA_WORDS:
+    if contains_any(
+        cargo_n,
+        DANZA_WORDS
+    ):
+        return "Danza"
 
-        word_n = normalize(word)
+    if contains_any(
+        asignatura_n,
+        DANZA_WORDS
+    ):
+        return "Danza"
 
-        if (
-            word_n in cargo_n
-            or word_n in asignatura_n
-            or word_n in especialidad_n
-        ):
-            return "Danza"
+    if contains_any(
+        especialidad_n,
+        DANZA_WORDS
+    ):
+        return "Danza"
 
     # --------------------------------------------------------
     # EDUCACIÓN ARTÍSTICA
     # --------------------------------------------------------
 
-    for word in EDUCACION_ARTISTICA_WORDS:
+    artistic_text = " ".join([
+        cargo_n,
+        asignatura_n,
+        especialidad_n,
+    ])
 
-        word_n = normalize(word)
+    if contains_any(
+        artistic_text,
+        NON_ARTISTIC_SUBJECTS
+    ):
 
-        if (
-            word_n in cargo_n
-            or word_n in asignatura_n
-            or word_n in especialidad_n
-        ):
-            return "Educación Artística"
+        # Si es claramente una materia no artística,
+        # no la clasificamos como Educación Artística.
+        return None
 
-    # Área oficial ARTISTICA.
-    if area_n == "artistica":
+    if contains_any(
+        artistic_text,
+        EDUCACION_ARTISTICA_WORDS
+    ):
         return "Educación Artística"
 
-    # --------------------------------------------------------
-    # RESPALDO FINAL
-    # --------------------------------------------------------
-
-    fallback = normalize(
-        f"{cargo} "
-        f"{asignatura} "
-        f"{area_oficial} "
-        f"{especialidad} "
-        f"{institucion}"
-    )
-
-    for word in DANZA_WORDS:
-
-        if normalize(word) in fallback:
-            return "Danza"
-
-    for word in PRECEPTORIA_WORDS:
-
-        if normalize(word) in fallback:
-            return "Preceptoría"
-
-    # Solamente usamos el raw como último recurso.
-    raw_n = normalize(raw)
-
-    for word in DANZA_WORDS:
-
-        if normalize(word) in raw_n:
-            return "Danza"
-
-    for word in PRECEPTORIA_WORDS:
-
-        if normalize(word) in raw_n:
-            return "Preceptoría"
+    # Área oficial ARTISTICA.
+    #
+    # Solamente la usamos si no encontramos una materia
+    # claramente no artística.
+    if area_n == "artistica":
+        return "Educación Artística"
 
     return None
 
 
 # ============================================================
-# EXTRACCIÓN ROBUSTA DE CAMPOS
+# EXTRACCIÓN DE CAMPOS
 # ============================================================
 
-def get_value(
-    lines,
-    labels
-):
-    """
-    Extrae valores aunque el sitio utilice cualquiera de estos
-    formatos:
+def get_value(lines, labels):
 
-        Asignatura: DANZA
-
-    o:
-
-        Asignatura:
-        DANZA
-
-    o:
-
-        Asignatura
-
-        DANZA
-    """
-
-    normalized_labels = [
+    labels_n = [
         normalize(label)
         for label in labels
     ]
@@ -487,15 +438,15 @@ def get_value(
 
         current = normalize(line)
 
-        for label in normalized_labels:
+        for label in labels_n:
 
             # ------------------------------------------------
-            # Etiqueta + valor en la misma línea
+            # Etiqueta y valor en la misma línea
             # ------------------------------------------------
 
-            prefix = label + ":"
-
-            if current.startswith(prefix):
+            if current.startswith(
+                label + ":"
+            ):
 
                 value = line.split(
                     ":",
@@ -505,20 +456,10 @@ def get_value(
                 if value:
                     return value
 
-                # Si después de ":" no hay nada,
-                # buscamos la siguiente línea no vacía.
-                for j in range(
-                    i + 1,
-                    min(
-                        len(lines),
-                        i + 8
-                    )
-                ):
+                # Valor en la línea siguiente
+                if i + 1 < len(lines):
 
-                    candidate = lines[j].strip()
-
-                    if candidate:
-                        return candidate
+                    return lines[i + 1]
 
             # ------------------------------------------------
             # Etiqueta sola
@@ -526,26 +467,14 @@ def get_value(
 
             if current == label:
 
-                for j in range(
-                    i + 1,
-                    min(
-                        len(lines),
-                        i + 8
-                    )
-                ):
+                if i + 1 < len(lines):
 
-                    candidate = lines[j].strip()
-
-                    if candidate:
-                        return candidate
+                    return lines[i + 1]
 
     return ""
 
 
 def get_hours(lines):
-    """
-    Busca horas cátedra y también contempla variantes.
-    """
 
     value = get_value(
         lines,
@@ -560,11 +489,11 @@ def get_hours(lines):
     if value:
         return value
 
-    # Respaldo mediante regex.
     text = " ".join(lines)
 
     match = re.search(
-        r"horas\s+c[aá]tedra\s*:?\s*(\d+(?:[.,]\d+)?)",
+        r"horas\s+c[aá]tedra\s*:?\s*"
+        r"(\d+(?:[.,]\d+)?)",
         text,
         flags=re.IGNORECASE
     )
@@ -576,6 +505,7 @@ def get_hours(lines):
 
 
 def get_fecha(lines):
+
     return get_value(
         lines,
         [
@@ -587,22 +517,17 @@ def get_fecha(lines):
 
 
 # ============================================================
-# EXTRAER LINKS DE UNA PÁGINA CABA
+# CABA — LINKS
 # ============================================================
 
 async def extract_caba_links(page):
-    """
-    Obtiene todos los enlaces /solicitud/ de una página.
 
-    No depende de una clase CSS específica.
-    """
-
-    links = await page.locator(
+    elements = await page.locator(
         'a[href*="/solicitud/"]'
     ).evaluate_all(
         """
         elements => elements.map(a => ({
-            href: a.href,
+            href: a.href || "",
             text: (a.innerText || "").trim()
         }))
         """
@@ -612,7 +537,7 @@ async def extract_caba_links(page):
 
     seen = set()
 
-    for item in links:
+    for item in elements:
 
         href = clean(
             item.get(
@@ -648,26 +573,16 @@ async def extract_caba_links(page):
 
 
 # ============================================================
-# DESCUBRIR CANTIDAD DE PÁGINAS CABA
+# CABA — DESCUBRIR PAGINACIÓN
 # ============================================================
 
-async def discover_caba_pages(page):
-    """
-    Intenta descubrir la última página del listado.
+async def discover_caba_last_page(page):
 
-    Si el sitio no expone correctamente la paginación,
-    seguimos hasta MAX_CABA_PAGES pero paramos cuando
-    encontremos páginas sin solicitudes.
-    """
-
-    pages = set()
-
-    # La página actual siempre existe.
-    pages.add(1)
+    max_page = 1
 
     try:
 
-        pagination_links = await page.locator(
+        elements = await page.locator(
             "a"
         ).evaluate_all(
             """
@@ -678,19 +593,18 @@ async def discover_caba_pages(page):
             """
         )
 
-        for link in pagination_links:
+        for item in elements:
 
-            href = link.get(
+            href = item.get(
                 "href",
                 ""
             )
 
-            text = link.get(
+            text = item.get(
                 "text",
                 ""
             )
 
-            # Intentamos obtener ?page=N.
             match = re.search(
                 r"[?&]page=(\d+)",
                 href
@@ -702,53 +616,36 @@ async def discover_caba_pages(page):
                     match.group(1)
                 )
 
-                if (
-                    1 <= number
-                    <= MAX_CABA_PAGES
-                ):
-                    pages.add(number)
+                if number > max_page:
+                    max_page = number
 
-            # También aceptamos botones numerados.
             if text.isdigit():
 
                 number = int(text)
 
-                if (
-                    1 <= number
-                    <= MAX_CABA_PAGES
-                ):
-                    pages.add(number)
+                if number > max_page:
+                    max_page = number
 
     except Exception:
         pass
 
-    # Si no encontró paginación, empezamos igualmente
-    # con una cantidad razonable.
-    if len(pages) == 1:
-        return list(
-            range(
-                1,
-                MAX_CABA_PAGES + 1
-            )
-        )
-
-    return sorted(pages)
+    return min(
+        max_page,
+        MAX_CABA_PAGES
+    )
 
 
 # ============================================================
-# LEER UNA FICHA INDIVIDUAL CABA
+# CABA — DETALLE
 # ============================================================
 
 async def read_caba_detail(
-    browser,
+    context,
     href,
     listing_text=""
 ):
-    """
-    Abre la ficha individual y obtiene todos los campos.
-    """
 
-    page = await browser.new_page()
+    page = await context.new_page()
 
     try:
 
@@ -759,15 +656,15 @@ async def read_caba_detail(
         )
 
         await page.wait_for_timeout(
-            800
+            300
         )
 
-        detail_text = await page.locator(
+        body = await page.locator(
             "body"
         ).inner_text()
 
         lines = extract_lines(
-            detail_text
+            body
         )
 
         estado = get_value(
@@ -849,6 +746,28 @@ async def read_caba_detail(
         )
 
         # ----------------------------------------------------
+        # ESTADO
+        # ----------------------------------------------------
+
+        estado_n = normalize(
+            estado
+        )
+
+        unavailable = [
+            "asignada",
+            "cerrada",
+            "desistida",
+            "baja",
+            "anulada",
+        ]
+
+        if estado_n in unavailable:
+
+            await page.close()
+
+            return None
+
+        # ----------------------------------------------------
         # CLASIFICACIÓN
         # ----------------------------------------------------
 
@@ -857,33 +776,9 @@ async def read_caba_detail(
             asignatura=asignatura,
             area_oficial=area_oficial,
             especialidad=especialidad,
-            institucion=establecimiento,
-            raw=detail_text
         )
 
         if categoria is None:
-
-            await page.close()
-
-            return None
-
-        # ----------------------------------------------------
-        # ESTADOS QUE NO QUEREMOS MOSTRAR
-        # ----------------------------------------------------
-
-        estado_n = normalize(
-            estado
-        )
-
-        estados_no_disponibles = {
-            "asignada",
-            "cerrada",
-            "desistida",
-            "baja",
-            "anulada",
-        }
-
-        if estado_n in estados_no_disponibles:
 
             await page.close()
 
@@ -905,8 +800,7 @@ async def read_caba_detail(
 
             "id": make_id(
                 "CABA",
-                href,
-                titulo
+                href
             ),
 
             "source": "CABA",
@@ -915,10 +809,8 @@ async def read_caba_detail(
 
             "area": categoria,
 
-            "nivel": (
+            "nivel": clean(
                 nivel
-                or area_oficial
-                or ""
             ),
 
             "titulo": clean(
@@ -975,9 +867,7 @@ async def read_caba_detail(
 
             "scraped_at": now_iso(),
 
-            # Conservamos una parte del texto original para
-            # poder depurar el scraper si CABA cambia.
-            "raw": detail_text[:10000],
+            "raw": body[:10000],
         }
 
         await page.close()
@@ -1016,21 +906,18 @@ async def scrape_caba():
             headless=True
         )
 
+        context = await browser.new_context()
+
         # ----------------------------------------------------
-        # Abrimos primero la página 1.
+        # PRIMERA PÁGINA
         # ----------------------------------------------------
 
-        first_page = await browser.new_page()
+        first_page = await context.new_page()
 
         try:
 
-            first_url = (
-                CABA_BASE
-                + "?page=1"
-            )
-
             await first_page.goto(
-                first_url,
+                CABA_BASE + "?page=1",
                 wait_until="domcontentloaded",
                 timeout=PAGE_TIMEOUT
             )
@@ -1039,14 +926,14 @@ async def scrape_caba():
                 DYNAMIC_WAIT
             )
 
-            pages_to_check = (
-                await discover_caba_pages(
+            first_links = (
+                await extract_caba_links(
                     first_page
                 )
             )
 
-            first_links = (
-                await extract_caba_links(
+            last_page = (
+                await discover_caba_last_page(
                     first_page
                 )
             )
@@ -1054,6 +941,7 @@ async def scrape_caba():
         except Exception as exc:
 
             await first_page.close()
+            await context.close()
             await browser.close()
 
             raise RuntimeError(
@@ -1063,150 +951,119 @@ async def scrape_caba():
         await first_page.close()
 
         # ----------------------------------------------------
-        # Si no encontramos paginación confiable,
-        # iremos secuencialmente hasta encontrar una página
-        # sin resultados.
+        # TODAS LAS PÁGINAS
         # ----------------------------------------------------
 
-        seen_urls = set()
+        all_links = []
 
-        # Procesamos primero página 1.
-        pages_sequence = list(
-            pages_to_check
+        # Página 1
+        all_links.extend(
+            first_links
         )
 
-        # Aseguramos que haya 1.
-        if 1 not in pages_sequence:
-            pages_sequence.insert(
-                0,
-                1
-            )
+        stats["pages_checked"] += 1
 
-        # ----------------------------------------------------
-        # Recorrer páginas
-        # ----------------------------------------------------
+        stats["links_found"] += len(
+            first_links
+        )
 
-        for page_number in pages_sequence:
+        # Páginas restantes
+        for page_number in range(
+            2,
+            last_page + 1
+        ):
 
-            if (
-                page_number < 1
-                or page_number > MAX_CABA_PAGES
-            ):
-                continue
+            page = await context.new_page()
 
-            # Ya tenemos links de página 1.
-            if page_number == 1:
+            try:
 
-                links = first_links
+                url = (
+                    CABA_BASE
+                    + f"?page={page_number}"
+                )
 
-            else:
+                await page.goto(
+                    url,
+                    wait_until="domcontentloaded",
+                    timeout=PAGE_TIMEOUT
+                )
 
-                page = await browser.new_page()
+                await page.wait_for_timeout(
+                    DYNAMIC_WAIT
+                )
 
-                try:
-
-                    url = (
-                        CABA_BASE
-                        + f"?page={page_number}"
+                links = (
+                    await extract_caba_links(
+                        page
                     )
+                )
 
-                    await page.goto(
-                        url,
-                        wait_until="domcontentloaded",
-                        timeout=PAGE_TIMEOUT
-                    )
+                stats["pages_checked"] += 1
 
-                    await page.wait_for_timeout(
-                        DYNAMIC_WAIT
-                    )
+                stats["links_found"] += len(
+                    links
+                )
 
-                    links = (
-                        await extract_caba_links(
-                            page
-                        )
-                    )
+                all_links.extend(
+                    links
+                )
 
-                except Exception:
+            except Exception:
 
-                    stats["errors"] += 1
+                stats["errors"] += 1
 
-                    await page.close()
-
-                    continue
+            finally:
 
                 await page.close()
 
-            stats["pages_checked"] += 1
+        # ----------------------------------------------------
+        # LINKS ÚNICOS
+        # ----------------------------------------------------
 
-            stats["links_found"] += len(
-                links
+        unique_links = {}
+
+        for link in all_links:
+
+            href = link.get(
+                "href",
+                ""
             )
 
-            # ------------------------------------------------
-            # Si la página está vacía y estamos recorriendo
-            # secuencialmente, no tiene sentido continuar.
-            # ------------------------------------------------
+            if href:
+                unique_links[href] = link
 
-            if not links:
+        # ----------------------------------------------------
+        # LEER DETALLES
+        # ----------------------------------------------------
 
-                # Solamente cortamos si estamos más allá
-                # de la primera página.
-                if page_number > 1:
-                    break
+        for href, link in unique_links.items():
 
-                continue
+            stats["details_checked"] += 1
 
-            # ------------------------------------------------
-            # Procesar fichas
-            # ------------------------------------------------
-
-            for link in links:
-
-                href = link.get(
-                    "href",
-                    ""
-                )
-
-                listing_text = link.get(
+            item = await read_caba_detail(
+                context,
+                href,
+                link.get(
                     "text",
                     ""
                 )
+            )
 
-                if not href:
-                    continue
+            if item is None:
+                continue
 
-                if href in seen_urls:
-                    continue
+            results.append(
+                item
+            )
 
-                seen_urls.add(
-                    href
-                )
+            stats["relevant"] += 1
 
-                stats[
-                    "details_checked"
-                ] += 1
-
-                item = await read_caba_detail(
-                    browser,
-                    href,
-                    listing_text
-                )
-
-                if item is None:
-                    continue
-
-                results.append(
-                    item
-                )
-
-                stats[
-                    "relevant"
-                ] += 1
+        await context.close()
 
         await browser.close()
 
     # --------------------------------------------------------
-    # DEDUPLICACIÓN
+    # DEDUPLICAR
     # --------------------------------------------------------
 
     unique = {}
@@ -1232,20 +1089,7 @@ async def scrape_caba():
 # AVELLANEDA
 # ============================================================
 
-async def scrape_avellaneda_public():
-
-    """
-    Avellaneda / Provincia:
-
-    NO inventamos ofertas.
-
-    La página pública de SAD Avellaneda sirve para
-    comunicaciones, cronogramas y accesos, pero las
-    ofertas APD pueden requerir autenticación ABC.
-
-    Por eso esta función solamente devuelve información
-    pública verificable y deja claramente indicado el estado.
-    """
+async def scrape_avellaneda():
 
     results = []
 
@@ -1253,7 +1097,6 @@ async def scrape_avellaneda_public():
         "public_page_ok": False,
         "apd_public_ok": False,
         "login_required": False,
-        "links_found": 0,
     }
 
     async with async_playwright() as p:
@@ -1263,7 +1106,7 @@ async def scrape_avellaneda_public():
         )
 
         # ----------------------------------------------------
-        # Página SAD Avellaneda
+        # SAD AVELLANEDA
         # ----------------------------------------------------
 
         page = await browser.new_page()
@@ -1277,84 +1120,50 @@ async def scrape_avellaneda_public():
             )
 
             await page.wait_for_timeout(
-                2000
+                1000
             )
-
-            body = await page.locator(
-                "body"
-            ).inner_text()
 
             stats[
                 "public_page_ok"
             ] = True
 
-            # ------------------------------------------------
-            # Buscamos enlaces relevantes.
-            # ------------------------------------------------
-
-            links = await page.locator(
-                "a"
-            ).evaluate_all(
-                """
-                elements => elements.map(a => ({
-                    href: a.href || "",
-                    text: (a.innerText || "").trim()
-                }))
-                """
-            )
-
-            stats[
-                "links_found"
-            ] = len(
-                links
-            )
-
-            # No agregamos una página de SAD como si fuera
-            # una oferta docente individual.
-            #
-            # Esto evita mostrar información engañosa.
-
         except Exception:
-
-            body = ""
+            pass
 
         await page.close()
 
         # ----------------------------------------------------
-        # Intento de comprobar APD público.
+        # APD PROVINCIA
         # ----------------------------------------------------
 
-        apd_page = await browser.new_page()
+        apd = await browser.new_page()
 
         try:
 
-            await apd_page.goto(
+            await apd.goto(
                 APD_PBA,
                 wait_until="domcontentloaded",
                 timeout=PAGE_TIMEOUT
             )
 
-            await apd_page.wait_for_timeout(
-                2000
+            await apd.wait_for_timeout(
+                1000
             )
 
-            apd_text = await apd_page.locator(
+            text = await apd.locator(
                 "body"
             ).inner_text()
 
-            apd_n = normalize(
-                apd_text
+            text_n = normalize(
+                text
             )
 
-            # Si aparece login / CUIL / contraseña,
-            # consideramos que el acceso a las ofertas
-            # está protegido.
             if (
-                "cuil" in apd_n
-                or "contraseña" in apd_n
-                or "contrasena" in apd_n
-                or "iniciar sesion" in apd_n
-                or "iniciar sesión" in apd_n
+                "cuil" in text_n
+                or "contrasena" in text_n
+                or "contraseña" in text_n
+                or "iniciar sesion" in text_n
+                or "iniciar sesión" in text_n
             ):
 
                 stats[
@@ -1369,12 +1178,11 @@ async def scrape_avellaneda_public():
 
         except Exception:
 
-            # Si no podemos acceder, no inventamos nada.
             stats[
                 "login_required"
             ] = True
 
-        await apd_page.close()
+        await apd.close()
 
         await browser.close()
 
@@ -1382,38 +1190,16 @@ async def scrape_avellaneda_public():
 
 
 # ============================================================
-# NORMALIZACIÓN DE ITEMS ANTIGUOS
+# COMPATIBILIDAD CON DATOS ANTERIORES
 # ============================================================
 
 def normalize_existing_item(item):
-    """
-    Mantiene compatibilidad con datos de versiones anteriores.
-    """
 
     item = dict(item)
 
-    item.setdefault(
-        "id",
-        make_id(
-            item.get(
-                "source",
-                ""
-            ),
-            item.get(
-                "url",
-                ""
-            ),
-            item.get(
-                "titulo",
-                item.get(
-                    "title",
-                    ""
-                )
-            )
-        )
-    )
+    if not item.get("url"):
+        item["url"] = ""
 
-    # Compatibilidad entre versiones.
     if not item.get("titulo"):
         item["titulo"] = item.get(
             "title",
@@ -1444,14 +1230,24 @@ def normalize_existing_item(item):
             ""
         )
 
-    if not item.get("url"):
-        item["url"] = ""
+    if not item.get("id"):
+
+        item["id"] = make_id(
+            item.get(
+                "source",
+                ""
+            ),
+            item.get(
+                "url",
+                ""
+            )
+        )
 
     return item
 
 
 # ============================================================
-# ACTUALIZACIÓN PRINCIPAL
+# ACTUALIZACIÓN
 # ============================================================
 
 async def perform_update():
@@ -1466,10 +1262,6 @@ async def perform_update():
         )
     ]
 
-    # --------------------------------------------------------
-    # IDs que ya habíamos visto.
-    # --------------------------------------------------------
-
     seen_before = {
         item.get("id")
         for item in previous_items
@@ -1477,10 +1269,8 @@ async def perform_update():
     }
 
     # --------------------------------------------------------
-    # SCRAPE CABA
+    # CABA
     # --------------------------------------------------------
-
-    caba_error = None
 
     try:
 
@@ -1489,6 +1279,7 @@ async def perform_update():
         )
 
         caba_ok = True
+        caba_error = None
 
     except Exception as exc:
 
@@ -1498,22 +1289,17 @@ async def perform_update():
             "error": str(exc)
         }
 
-        caba_error = str(
-            exc
-        )
-
         caba_ok = False
+        caba_error = str(exc)
 
     # --------------------------------------------------------
-    # SCRAPE AVELLANEDA
+    # AVELLANEDA
     # --------------------------------------------------------
-
-    avellaneda_error = None
 
     try:
 
         av_items, av_stats = (
-            await scrape_avellaneda_public()
+            await scrape_avellaneda()
         )
 
         av_ok = bool(
@@ -1523,6 +1309,8 @@ async def perform_update():
             )
         )
 
+        av_error = None
+
     except Exception as exc:
 
         av_items = []
@@ -1531,11 +1319,8 @@ async def perform_update():
             "error": str(exc)
         }
 
-        avellaneda_error = str(
-            exc
-        )
-
         av_ok = False
+        av_error = str(exc)
 
     # --------------------------------------------------------
     # UNIFICAR
@@ -1547,7 +1332,7 @@ async def perform_update():
     )
 
     # --------------------------------------------------------
-    # NUEVA
+    # MARCAR NUEVAS
     # --------------------------------------------------------
 
     for item in current_items:
@@ -1558,17 +1343,9 @@ async def perform_update():
         )
 
     # --------------------------------------------------------
-    # IMPORTANTE:
-    #
-    # NO conservamos ofertas viejas que ya no aparecen.
-    #
-    # La lista representa las ofertas que actualmente
-    # aparecen en la fuente.
+    # ORDEN
     # --------------------------------------------------------
 
-    # Orden:
-    # nuevas primero
-    # después por fecha / título.
     current_items.sort(
         key=lambda item: (
             not item.get(
@@ -1585,7 +1362,7 @@ async def perform_update():
     )
 
     # --------------------------------------------------------
-    # Estado de las fuentes
+    # ESTADO DE FUENTES
     # --------------------------------------------------------
 
     source_status = {
@@ -1613,10 +1390,36 @@ async def perform_update():
 
             "details": av_stats,
 
-            "error": avellaneda_error,
-
+            "error": av_error,
         },
     }
+
+    # --------------------------------------------------------
+    # SEGURIDAD:
+    # si CABA falló completamente, NO borramos los datos
+    # anteriores.
+    #
+    # Esto evita que un error temporal del sitio deje
+    # el Radar vacío.
+    # --------------------------------------------------------
+
+    if not caba_ok:
+
+        old_caba = [
+            item
+            for item in previous_items
+            if item.get(
+                "zona"
+            ) == "CABA"
+        ]
+
+        current_items = (
+            old_caba
+            + av_items
+        )
+
+        for item in current_items:
+            item["nueva"] = False
 
     # --------------------------------------------------------
     # GUARDAR
@@ -1639,7 +1442,7 @@ async def perform_update():
 
 
 # ============================================================
-# ENDPOINT PRINCIPAL DE ACTUALIZACIÓN
+# API — ACTUALIZAR
 # ============================================================
 
 @app.post(
@@ -1651,18 +1454,23 @@ async def actualizar():
 
         data = await perform_update()
 
+        # IMPORTANTE:
+        # el frontend necesita recibir los ITEMS,
+        # no solamente la cantidad.
+
         return JSONResponse(
             content={
                 "ok": True,
+
                 "checked_at": data.get(
                     "checked_at"
                 ),
-                "items": len(
-                    data.get(
-                        "items",
-                        []
-                    )
+
+                "items": data.get(
+                    "items",
+                    []
                 ),
+
                 "source_status": data.get(
                     "source_status",
                     {}
@@ -1677,18 +1485,19 @@ async def actualizar():
             content={
                 "ok": False,
                 "error": str(exc),
+                "items": [],
             }
         )
 
 
 # ============================================================
-# ENDPOINT DE DATOS
+# API — OPORTUNIDADES
 # ============================================================
 
 @app.get(
-    "/api/posts"
+    "/api/oportunidades"
 )
-async def posts():
+async def oportunidades():
 
     data = load_data()
 
@@ -1700,23 +1509,8 @@ async def posts():
         )
     ]
 
-    # Más recientes / nuevas primero.
-    items.sort(
-        key=lambda item: (
-            not item.get(
-                "nueva",
-                False
-            ),
-            normalize(
-                item.get(
-                    "titulo",
-                    ""
-                )
-            )
-        )
-    )
-
     return {
+
         "ok": True,
 
         "checked_at": data.get(
@@ -1733,7 +1527,19 @@ async def posts():
 
 
 # ============================================================
-# FILTROS
+# API — POSTS
+# ============================================================
+
+@app.get(
+    "/api/posts"
+)
+async def posts():
+
+    return await oportunidades()
+
+
+# ============================================================
+# API — FILTROS
 # ============================================================
 
 @app.get(
@@ -1775,30 +1581,6 @@ async def filters():
         )
     })
 
-    areas = sorted({
-        item.get(
-            "nivel",
-            ""
-        )
-        for item in items
-        if item.get(
-            "nivel",
-            ""
-        )
-    })
-
-    sources = sorted({
-        item.get(
-            "source",
-            ""
-        )
-        for item in items
-        if item.get(
-            "source",
-            ""
-        )
-    })
-
     return {
 
         "ok": True,
@@ -1806,15 +1588,11 @@ async def filters():
         "locations": locations,
 
         "categories": categories,
-
-        "areas": areas,
-
-        "sources": sources,
     }
 
 
 # ============================================================
-# HEALTH / SALUD
+# API — HEALTH
 # ============================================================
 
 @app.get(
@@ -1827,18 +1605,13 @@ async def health():
 
     data = load_data()
 
-    source_status = data.get(
+    status = data.get(
         "source_status",
         {}
     )
 
-    caba = source_status.get(
+    caba = status.get(
         "CABA",
-        {}
-    )
-
-    avellaneda = source_status.get(
-        "Avellaneda",
         {}
     )
 
@@ -1862,17 +1635,12 @@ async def health():
             )
         ),
 
-        "source_status": {
-
-            "CABA": caba,
-
-            "Avellaneda": avellaneda,
-        },
+        "source_status": status,
     }
 
 
 # ============================================================
-# INFORMACIÓN
+# API — INFORMACIÓN
 # ============================================================
 
 @app.get(
@@ -1884,7 +1652,7 @@ async def api_info():
 
         "app": "Radar Docente",
 
-        "version": "2.0",
+        "version": "3.0",
 
         "sources": [
             "CABA",
@@ -1898,9 +1666,9 @@ async def api_info():
         ],
 
         "update": (
-            "manual mediante POST /api/actualizar"
+            "manual mediante "
+            "POST /api/actualizar"
         ),
-
     }
 
 
@@ -1917,12 +1685,18 @@ async def home():
 
         FRONTEND / "index.html",
 
-        Path("/app/Interfaz/index.html"),
+        Path(
+            "/app/frontend/index.html"
+        ),
 
-        Path("/app/frontend/index.html"),
+        Path(
+            "/app/Interfaz/index.html"
+        ),
 
-        Path(__file__).resolve().parent
-        / "index.html",
+        (
+            Path(__file__).resolve().parent
+            / "index.html"
+        ),
     ]
 
     for file_path in possible_files:
@@ -1938,7 +1712,7 @@ async def home():
             "ok": True,
             "message": (
                 "Radar Docente API funcionando."
-            )
+            ),
         }
     )
 
