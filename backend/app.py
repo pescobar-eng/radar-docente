@@ -46,8 +46,8 @@ MAX_CABA_PAGES = 100
 
 PAGE_TIMEOUT = 60000
 
-# No hace falta esperar varios segundos en cada página.
-DYNAMIC_WAIT = 700
+# Espera de seguridad para contenido dinámico.
+DYNAMIC_WAIT = 1200
 
 
 # ============================================================
@@ -403,8 +403,6 @@ def classify(
         NON_ARTISTIC_SUBJECTS
     ):
 
-        # Si es claramente una materia no artística,
-        # no la clasificamos como Educación Artística.
         return None
 
     if contains_any(
@@ -414,9 +412,7 @@ def classify(
         return "Educación Artística"
 
     # Área oficial ARTISTICA.
-    #
-    # Solamente la usamos si no encontramos una materia
-    # claramente no artística.
+
     if area_n == "artistica":
         return "Educación Artística"
 
@@ -440,9 +436,7 @@ def get_value(lines, labels):
 
         for label in labels_n:
 
-            # ------------------------------------------------
             # Etiqueta y valor en la misma línea
-            # ------------------------------------------------
 
             if current.startswith(
                 label + ":"
@@ -456,14 +450,11 @@ def get_value(lines, labels):
                 if value:
                     return value
 
-                # Valor en la línea siguiente
                 if i + 1 < len(lines):
 
                     return lines[i + 1]
 
-            # ------------------------------------------------
             # Etiqueta sola
-            # ------------------------------------------------
 
             if current == label:
 
@@ -922,6 +913,16 @@ async def scrape_caba():
                 timeout=PAGE_TIMEOUT
             )
 
+            # IMPORTANTE:
+            # CABA carga los cargos dinámicamente.
+            # Esperamos a que aparezcan realmente los
+            # enlaces antes de intentar extraerlos.
+
+            await first_page.wait_for_selector(
+                'a[href*="/solicitud/"]',
+                timeout=PAGE_TIMEOUT
+            )
+
             await first_page.wait_for_timeout(
                 DYNAMIC_WAIT
             )
@@ -931,6 +932,17 @@ async def scrape_caba():
                     first_page
                 )
             )
+
+            # Si CABA respondió pero no entregó ningún
+            # enlace, lo consideramos un error de lectura
+            # y no "0 oportunidades".
+
+            if not first_links:
+
+                raise RuntimeError(
+                    "CABA respondió pero no se encontraron "
+                    "enlaces de solicitudes"
+                )
 
             last_page = (
                 await discover_caba_last_page(
@@ -957,6 +969,7 @@ async def scrape_caba():
         all_links = []
 
         # Página 1
+
         all_links.extend(
             first_links
         )
@@ -968,6 +981,7 @@ async def scrape_caba():
         )
 
         # Páginas restantes
+
         for page_number in range(
             2,
             last_page + 1
@@ -988,15 +1002,38 @@ async def scrape_caba():
                     timeout=PAGE_TIMEOUT
                 )
 
-                await page.wait_for_timeout(
-                    DYNAMIC_WAIT
-                )
+                # Esperar a que CABA termine de cargar
+                # los cargos dinámicamente.
+
+                try:
+
+                    await page.wait_for_selector(
+                        'a[href*="/solicitud/"]',
+                        timeout=PAGE_TIMEOUT
+                    )
+
+                    await page.wait_for_timeout(
+                        DYNAMIC_WAIT
+                    )
+
+                except Exception:
+
+                    stats["errors"] += 1
+                    continue
 
                 links = (
                     await extract_caba_links(
                         page
                     )
                 )
+
+                # Una página sin enlaces no se considera
+                # automáticamente una página válida.
+
+                if not links:
+
+                    stats["errors"] += 1
+                    continue
 
                 stats["pages_checked"] += 1
 
@@ -1398,9 +1435,6 @@ async def perform_update():
     # SEGURIDAD:
     # si CABA falló completamente, NO borramos los datos
     # anteriores.
-    #
-    # Esto evita que un error temporal del sitio deje
-    # el Radar vacío.
     # --------------------------------------------------------
 
     if not caba_ok:
@@ -1453,10 +1487,6 @@ async def actualizar():
     try:
 
         data = await perform_update()
-
-        # IMPORTANTE:
-        # el frontend necesita recibir los ITEMS,
-        # no solamente la cantidad.
 
         return JSONResponse(
             content={
@@ -1558,27 +1588,35 @@ async def filters():
     ]
 
     locations = sorted({
+
         item.get(
             "zona",
             ""
         )
+
         for item in items
+
         if item.get(
             "zona",
             ""
         )
+
     })
 
     categories = sorted({
+
         item.get(
             "area",
             ""
         )
+
         for item in items
+
         if item.get(
             "area",
             ""
         )
+
     })
 
     return {
